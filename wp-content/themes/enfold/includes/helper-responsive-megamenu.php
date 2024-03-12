@@ -1,6 +1,8 @@
 <?php
+if( ! defined( 'ABSPATH' ) ) {  exit;  }    // Exit if accessed directly
 
-if( !class_exists( 'avia_responsive_mega_menu' ) )
+
+if( ! class_exists( 'avia_responsive_mega_menu', false ) )
 {
 
 	/**
@@ -9,7 +11,8 @@ if( !class_exists( 'avia_responsive_mega_menu' ) )
 	 * @since 1.0.0
 	 * @uses Walker
 	 */
-	class avia_responsive_mega_menu extends Walker {
+	class avia_responsive_mega_menu extends Walker
+	{
 		/**
 		 * @see Walker::$tree_type
 		 * @var string
@@ -57,34 +60,34 @@ if( !class_exists( 'avia_responsive_mega_menu' ) )
 		 * @var stores if we already have an active first level main menu item.
 		 */
 		var $active_item = false;
-		
-		
+
+
 		/**
 		 * @var stores if we got a top or a sidebar main menu.
 		 */
 		var $top_menu = true;
-		
-		
+
+
 		/**
 		 * @var stores if we got a text menu or a single burger icon
 		 */
 		var $icon_menu = true;
-		
+
 		/**
 		 * @var stores if we got a top or a sidebar main menu.
 		 */
 		var $blog_id = false;
-		
+
 		/**
 		 * @var stores the number of first level menu items
 		 */
 		var $first_level_count = 0;
-		
+
 		/**
 		 * @var stores if mega menu is active
 		 */
 		var $mega_allowed = true;
-		
+
 
 		/**
 		*
@@ -102,21 +105,26 @@ if( !class_exists( 'avia_responsive_mega_menu' ) )
 				5 => "twelve units",
 				6 => "twelve units"
 			);
-			
-			$this->top_menu = avia_get_option('header_position','header_top') == 'header_top' ? true : false;
-			$this->icon_menu = avia_is_burger_menu();
-			
+
+			$this->top_menu 	= avia_get_option('header_position','header_top') == 'header_top' ? true : false;
+
+			/**
+			 * Allows to alter default settings Enfold-> Main Menu -> General -> Menu Items for Desktop
+			 * @since 4.4.2
+			 */
+			$this->icon_menu 	= apply_filters( 'avf_burger_menu_active', avia_is_burger_menu(), $this );
+
 			if(avia_get_option('frontpage') && avia_get_option('blogpage'))
 			{
 				$this->blog_id = avia_get_option('blogpage');
 			}
-			
+
 			if(isset($options['megamenu']) && $options['megamenu'] == "disabled") $this->mega_allowed = false;
-			
+
 			if($this->icon_menu)
 			{
-				$this->mega_active = false;
-				$this->mega_allowed = false;
+				//$this->mega_active = false;
+				//$this->mega_allowed = false;
 			}
 		}
 
@@ -195,6 +203,14 @@ if( !class_exists( 'avia_responsive_mega_menu' ) )
 			}
 
 
+			if(!empty($item->url) && strpos($item->url, "[domain]") !== false)
+			{
+				$replace = str_replace( "http://", "", get_home_url() );
+				$replace = str_replace( "https://", "", $replace );
+				$item->url = str_replace( "[domain]", $replace, $item->url);
+			}
+
+
 			if($depth === 1 && $this->mega_active && $this->mega_allowed)
 			{
 				$this->columns ++;
@@ -222,7 +238,7 @@ if( !class_exists( 'avia_responsive_mega_menu' ) )
 				if($title != "&#8211;" && trim($title) != "-" && $title != '"-"' ) //fallback for people who copy the description o_O
 				{
 					$heading_title = do_shortcode($title);
-					
+
 					if(!empty($item->url) && $item->url != "#" && $item->url != 'http://')
 					{
 						$heading_title = "<a href='".$item->url."'>{$title}</a>";
@@ -244,8 +260,6 @@ if( !class_exists( 'avia_responsive_mega_menu' ) )
 				$li_text_block_class = 'avia_mega_text_block ';
 
 				$item_output.= do_shortcode($item->post_content);
-
-
 			}
 			else
 			{
@@ -253,32 +267,36 @@ if( !class_exists( 'avia_responsive_mega_menu' ) )
 				$attributes .= ! empty( $item->target )     ? ' target="' . esc_attr( $item->target     ) .'"' : '';
 				$attributes .= ! empty( $item->xfn )        ? ' rel="'    . esc_attr( $item->xfn        ) .'"' : '';
 				$attributes .= ! empty( $item->url )        ? ' href="'   . esc_attr( $item->url        ) .'"' : '';
-				
-				if('inactive' != avia_get_option('markup') )
+
+				if( 'inactive' != avia_get_option('markup') )
 				{
 					$attributes .= ' itemprop="url"';
 				}
-				
+
+				// @since 4.8.6.5    accessibility rules
+				$attributes .= ' tabindex="0"';
+
 
 				$item_output .= $args->before;
-				$item_output .= '<a'. $attributes .'><span class="avia-bullet"></span>';
+				$item_output .= '<a'. $attributes  . '><span class="avia-bullet"></span>';
 				$item_output .= $args->link_before .'<span class="avia-menu-text">'. do_shortcode(apply_filters('the_title', $item->title, $item->ID)) ."</span>". $args->link_after;
-				if($depth === 0) 
+
+				if($depth === 0)
 				{
-					if((!$this->top_menu || $this->icon_menu) && !empty($item->description))
+					if(!empty($item->description))
 					{
 						$item_output .= '<span class="avia-menu-subtext">'. do_shortcode($item->description) ."</span>";
 					}
-				
+
 					$item_output .= '<span class="avia-menu-fx"><span class="avia-arrow-wrap"><span class="avia-arrow"></span></span></span>';
 				}
-				
+
 				$item_output .= '</a>';
 				$item_output .= $args->after;
 			}
-			
-			
-			
+
+
+
 
 			$class_names = $value = '';
 			$indent = ( $depth ) ? str_repeat( "\t", $depth ) : '';
@@ -296,24 +314,24 @@ if( !class_exists( 'avia_responsive_mega_menu' ) )
 					$this->active_item = true;
 				}
 			}
-			
-			
+
+
 
 			$class_names = join( ' ', apply_filters( 'nav_menu_css_class', array_filter( $classes ), $item ) );
 			if($depth === 0 && $this->mega_active && $this->mega_allowed) $class_names .= " menu-item-mega-parent ";
 			if($depth === 0 ) $class_names .= " menu-item-top-level menu-item-top-level-".$this->first_level_count;
-			
+
 			//highlight correct blog page
 			if($depth === 0 && $this->blog_id && $this->blog_id == $item->object_id && is_singular('post'))
 			{
 				$class_names .= " current-menu-item";
 			}
-			
-			
-			
+
+
+
 			$class_names = ' class="'.$li_text_block_class. esc_attr( $class_names ) . $column_class.'"';
-			
-			$output .= $indent . '<li id="menu-item-'. $item->ID . '"' . $value . $class_names .'>';
+
+			$output .= $indent . '<li role="menuitem" id="menu-item-'. $item->ID . '"' . $value . $class_names .'>';
 
 
 

@@ -1,35 +1,49 @@
 <?php
 /**
- * The WordPress version string
+ * WordPress Version
+ *
+ * Contains version information for the current WordPress release.
+ *
+ * @package WordPress
+ * @since 1.2.0
+ */
+
+/**
+ * The WordPress version string.
+ *
+ * Holds the current version number for WordPress core. Used to bust caches
+ * and to enable development mode for scripts when running from the /src directory.
  *
  * @global string $wp_version
  */
-$wp_version = '4.7.28';
+$wp_version = '6.4.3';
 
 /**
  * Holds the WordPress DB revision, increments when changes are made to the WordPress DB schema.
  *
  * @global int $wp_db_version
  */
-$wp_db_version = 38590;
+$wp_db_version = 56657;
 
 /**
- * Holds the TinyMCE version
+ * Holds the TinyMCE version.
  *
  * @global string $tinymce_version
  */
-$tinymce_version = '4506-20170408';
+$tinymce_version = '49110-20201110';
 
 /**
- * Holds the required PHP version
+ * Holds the required PHP version.
  *
  * @global string $required_php_version
  */
-$required_php_version = '5.2.4';
+$required_php_version = '7.0.0';
 
 /**
- * Holds the required MySQL version
+ * Holds the required MySQL version.
  *
  * @global string $required_mysql_version
  */
 $required_mysql_version = '5.0';
+
+$wp_local_package = 'de_DE';

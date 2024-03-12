@@ -5,6 +5,7 @@
  * @package WordPress
  * @subpackage Importer
  */
+if( ! defined( 'AVIA_FW' ) )	{	exit( 'No direct script access allowed' );	}
 
 /**
  * WordPress Importer class for managing parsing of WXR files.
@@ -187,7 +188,7 @@ class WXR_Parser_SimpleXML {
 						);
 					}
 				}
-			
+
 				$post['comments'][] = array(
 					'comment_id' => (int) $comment->comment_id,
 					'comment_author' => (string) $comment->comment_author,
@@ -389,7 +390,7 @@ class WXR_Parser_Regex {
 	function __construct() {
 		$this->has_gzip = is_callable( 'gzopen' );
 	}
-	
+
 	function WXR_Parser_Regex() {
 		$this->__construct();
 	}

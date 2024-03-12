@@ -10,8 +10,10 @@ Text Domain: wordpress-importer
 License: GPL version 2 or later - http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
 */
 
-if ( ! defined( 'WP_LOAD_IMPORTERS' ) )
+if( ! defined( 'WP_LOAD_IMPORTERS' ) )
+{
 	return;
+}
 
 /** Display verbose errors */
 define( 'IMPORT_DEBUG', false );
@@ -19,7 +21,8 @@ define( 'IMPORT_DEBUG', false );
 // Load Importer API
 require_once ABSPATH . 'wp-admin/includes/import.php';
 
-if ( ! class_exists( 'WP_Importer' ) ) {
+if ( ! class_exists( 'WP_Importer', false ) )
+{
 	$class_wp_importer = ABSPATH . 'wp-admin/includes/class-wp-importer.php';
 	if ( file_exists( $class_wp_importer ) )
 		require $class_wp_importer;
@@ -34,7 +37,7 @@ require dirname( __FILE__ ) . '/parsers.php';
  * @package WordPress
  * @subpackage Importer
  */
-if ( class_exists( 'WP_Importer' ) ) {
+if ( class_exists( 'WP_Importer', false ) ) {
 class WP_Import extends WP_Importer {
 	var $max_wxr_version = 1.2; // max. supported WXR version
 
@@ -795,7 +798,7 @@ class WP_Import extends WP_Importer {
 		}
 
 		foreach ( $item['postmeta'] as $meta )
-			$$meta['key'] = $meta['value'];
+			${$meta['key']} = $meta['value'];
 
 		if ( 'taxonomy' == $_menu_item_type && isset( $this->processed_terms[intval($_menu_item_object_id)] ) ) {
 			$_menu_item_object_id = $this->processed_terms[intval($_menu_item_object_id)];
@@ -902,23 +905,31 @@ class WP_Import extends WP_Importer {
 			return new WP_Error( 'upload_dir_error', $upload['error'] );
 
 		// fetch the remote url and write it to the placeholder file
-		$headers = wp_get_http( $url, $upload['file'] );
+//		$headers = wp_get_http( $url, $upload['file'] );			deprecated with 4.4.0 and not fixed (last checked with plugin version 0.6.3)
+		/**
+		 * see https://developer.wordpress.org/reference/classes/wp_http/get/
+		 * see https://developer.wordpress.org/reference/classes/wp_http/request/
+		 *
+		 * In addition the returned structure $headers also changed
+		 */
+		$http = new WP_Http();
+		$headers = $http->get( $url, array( 'filename' => $upload['file'], 'stream' => true ) );
 
 		// request failed
-		if ( ! $headers ) {
+		if ( $headers instanceof WP_Error ) {
 			@unlink( $upload['file'] );
 			return new WP_Error( 'import_file_error', __('Remote server did not respond', 'wordpress-importer') );
 		}
 
 		// make sure the fetch was successful
-		if ( $headers['response'] != '200' ) {
+		if ( $headers['response']['code'] != '200' ) {
 			@unlink( $upload['file'] );
-			return new WP_Error( 'import_file_error', sprintf( __('Remote server returned error response %1$d %2$s', 'wordpress-importer'), esc_html($headers['response']), get_status_header_desc($headers['response']) ) );
+			return new WP_Error( 'import_file_error', sprintf( __('Remote server returned error response %1$d %2$s', 'wordpress-importer'), esc_html($headers['response']['code']), get_status_header_desc($headers['response']['code']) ) );
 		}
 
 		$filesize = filesize( $upload['file'] );
 
-		if ( isset( $headers['content-length'] ) && $filesize != $headers['content-length'] ) {
+		if ( isset( $headers['headers']['data']['content-length'] ) && $filesize != $headers['headers']['data']['content-length'] ) {
 			@unlink( $upload['file'] );
 			return new WP_Error( 'import_file_error', __('Remote file is incorrect size', 'wordpress-importer') );
 		}
@@ -938,8 +949,8 @@ class WP_Import extends WP_Importer {
 		$this->url_remap[$url] = $upload['url'];
 		$this->url_remap[$post['guid']] = $upload['url']; // r13735, really needed?
 		// keep track of the destination if the remote url is redirected somewhere else
-		if ( isset($headers['x-final-location']) && $headers['x-final-location'] != $url )
-			$this->url_remap[$headers['x-final-location']] = $upload['url'];
+		if ( isset($headers['headers']['data']['x-final-location']) && $headers['headers']['data']['x-final-location'] != $url )
+			$this->url_remap[$headers['headers']['data']['x-final-location']] = $upload['url'];
 
 		return $upload;
 	}

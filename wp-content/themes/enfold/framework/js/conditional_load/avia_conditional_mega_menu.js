@@ -21,7 +21,7 @@
             $(document).on('click', '.menu-item-avia-enableconditionallogic', function()
             {
                 var checkbox = $(this),
-                    container = checkbox.parents('.menu-item:eq(0)');
+                    container = checkbox.parents('.menu-item').eq( 0 );
 
                 if(checkbox.is(':checked'))
                 {
@@ -42,7 +42,7 @@
             {
                 var select = $(this),
                     selected = select.find(':selected'),
-                    container = select.parents('.menu-item:eq(0)');
+                    container = select.parents('.menu-item').eq( 0 );
 
                 if(selected.hasClass('show_css_field'))
                 {
@@ -60,7 +60,7 @@
             {
                 var select = $(this),
                     selected = select.find(':selected'),
-                    container = select.parents('.menu-item:eq(0)');
+                    container = select.parents('.menu-item').eq( 0 );
 
                 if(selected.hasClass('show_id_field'))
                 {

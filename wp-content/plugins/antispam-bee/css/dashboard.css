@@ -1,11 +1,10 @@
-/* @group Vorderseite */
-
 #ab_chart {
-	color: #a0a5aa;
+	color: #a7aaad;
 	height: 140px;
 	margin: 0 -4px;
 	text-align: center;
 }
+
 #ab_chart_data {
 	display: none;
 }
@@ -18,5 +17,3 @@
 	position: relative;
 	white-space: nowrap;
 }
-
-/* @end group */

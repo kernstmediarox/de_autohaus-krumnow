@@ -1,106 +1,182 @@
 <?php
 /**
  * Page Split Element
+ *
+ * Add a page split to the template. A pagination helps the user to navigate to the previous/next page.
+ *
+ * This class does not support post css files
+ * ==========================================
+ *
+ * @since 4.8.8		modified code because WP (> 5.5) reroutes non existing singular post pages to first page
  */
- 
-// Don't load directly
-if ( !defined('ABSPATH') ) { die('-1'); }
+if( ! defined( 'ABSPATH' ) ) { exit; }		// Don't load directly
 
-if(current_theme_supports('avia_template_builder_page_split_element'))
+/**
+ * Currently only in BETA
+ * ======================
+ *
+ */
+if( ! current_theme_supports( 'avia_template_builder_page_split_element' ) )
 {
-	if ( !class_exists( 'av_sc_page_split' ) )
+	return;
+}
+
+
+if( ! class_exists( 'av_sc_page_split', false ) )
+{
+	class av_sc_page_split extends aviaShortcodeTemplate
 	{
-		class av_sc_page_split extends aviaShortcodeTemplate{
-				
-				/**
-				 * Create the config array for the shortcode button
-				 */
-				function shortcode_insert_button()
-				{
-					$this->config['name']		= __('Page Split', 'avia_framework' );
-					$this->config['tab']		= __('Layout Elements', 'avia_framework' );
-					$this->config['icon']		= AviaBuilder::$path['imagesURL']."sc-heading.png";
-					$this->config['order']		= 5;
-					$this->config['target']		= 'avia-target-insert';
-					$this->config['shortcode'] 	= 'av_sc_page_split';
-	                $this->config['tinyMCE'] 	= array('disable' => "true");
-					$this->config['tooltip'] 	= __('Add a page split to the template. A pagination helps the user to navigate to the previous/next page.', 'avia_framework' );
-	                $this->config['drag-level'] = 1;
-				}
-				
+		/**
+		 * @since 4.8.8
+		 * @var boolean
+		 */
+		protected $filter_content;
 
-				 
-				/**
-				 * Editor Element - this function defines the visual appearance of an element on the AviaBuilder Canvas
-				 * Most common usage is to define some markup in the $params['innerHtml'] which is then inserted into the drag and drop container
-				 * Less often used: $params['data'] to add data attributes, $params['class'] to modify the className
-				 *
-				 *
-				 * @param array $params this array holds the default values for $content and $args. 
-				 * @return $params the return array usually holds an innerHtml key that holds item specific markup.
-				 */
-	            function editor_element($params)
-	            {
-	                $params['innerHtml'] = "<img src='".$this->config['icon']."' title='".$this->config['name']."' />";
-	                $params['innerHtml'].= "<div class='avia-element-label'>".$this->config['name']."</div>";
-	                $params['content'] 	 = NULL; //remove to allow content elements
-	                return $params;
-	            }
-				
-				/**
-				 * Frontend Shortcode Handler
-				 *
-				 * @param array $atts array of attributes
-				 * @param string $content text within enclosing form of shortcode element 
-				 * @param string $shortcodename the shortcode found, when == callback name
-				 * @return string $output returns the modified html string 
-				 */
-				function shortcode_handler($atts, $content = "", $shortcodename = "", $meta = "")
-				{
-	        		return '<!--avia_template_builder_nextpage-->';
-	        	}
-				
-				
-		}
-	}
+		/**
+		 * @since 4.8.8
+		 * @var string
+		 */
+		protected $split_string;
 
-
-	if(!function_exists('avia_template_builder_split_page_filter'))
-	{
-		add_filter('avf_template_builder_content', 'avia_template_builder_split_page_filter', 10, 1);
-		function avia_template_builder_split_page_filter($content)
+		/**
+		 * @since 4.8.8
+		 * @param AviaBuilder $builder
+		 */
+		public function __construct( AviaBuilder $builder )
 		{
-			/*
-			multipage support - adds page split to content if user uses the element in the page builder
-			nextpage code taken from /wp-includes/query.php and slightly modified 
-			 */
-			global $id, $page, $pages, $multipage, $numpages;
-			$numpages = 1;
-			$multipage = 0;
-			$page = get_query_var('page');
-			if(!$page) $page = 1;
-			if(false !== strpos($content, '<!--avia_template_builder_nextpage-->'))
+			$this->filter_content = false;
+			$this->split_string = '<!--avia_template_builder_nextpage-->';
+
+			parent::__construct( $builder );
+		}
+
+		/**
+		 * Create the config array for the shortcode button
+		 */
+		protected function shortcode_insert_button()
+		{
+			$this->config['self_closing']	= 'yes';
+
+			$this->config['name']			= __( 'Page Split', 'avia_framework' );
+			$this->config['tab']			= __( 'Layout Elements', 'avia_framework' );
+			$this->config['icon']			= AviaBuilder::$path['imagesURL'] . 'sc-heading.png';
+			$this->config['order']			= 1;
+			$this->config['target']			= 'avia-target-insert';
+			$this->config['shortcode']		= 'av_sc_page_split';
+			$this->config['tinyMCE']		= array( 'disable' => 'true' );
+			$this->config['tooltip']		= __( 'Add a page split to the template. A pagination helps the user to navigate to the previous/next content part. Do not use together with other pagination on this page.', 'avia_framework' );
+			$this->config['drag-level']		= 1;
+		}
+
+		/**
+		 * Editor Element - this function defines the visual appearance of an element on the AviaBuilder Canvas
+		 * Most common usage is to define some markup in the $params['innerHtml'] which is then inserted into the drag and drop container
+		 * Less often used: $params['data'] to add data attributes, $params['class'] to modify the className
+		 *
+		 * @param array $params			holds the default values for $content and $args.
+		 * @return array				usually holds an innerHtml key that holds item specific markup.
+		 */
+		public function editor_element( $params )
+		{
+			$params = parent::editor_element( $params );
+
+			$params['content'] = null; //remove to allow content elements
+			return $params;
+		}
+
+		/**
+		 * Frontend Shortcode Handler
+		 *
+		 * @param array $atts array of attributes
+		 * @param string $content text within enclosing form of shortcode element
+		 * @param string $shortcodename the shortcode found, when == callback name
+		 * @return string $output returns the modified html string
+		 */
+		public function shortcode_handler( $atts, $content = '', $shortcodename = '', $meta = '' )
+		{
+			if( ! $this->filter_content )
 			{
-				$content = str_replace( "\n<!--avia_template_builder_nextpage-->\n", '<!--avia_template_builder_nextpage-->', $content );
-				$content = str_replace( "\n<!--avia_template_builder_nextpage-->", '<!--avia_template_builder_nextpage-->', $content );
-				$content = str_replace( "<!--avia_template_builder_nextpage-->\n", '<!--avia_template_builder_nextpage-->', $content );
-				// Ignore nextpage at the beginning of the content.
-				if ( 0 === strpos( $content, '<!--avia_template_builder_nextpage-->' ) )
-					$content = substr( $content, 15 );
-				$pages = explode('<!--avia_template_builder_nextpage-->', $content);
-				$numpages = count($pages);
-				if ( $numpages > 1 )
-					$multipage = 1;
+				add_filter( 'avf_template_builder_content', array( $this, 'handler_avf_template_builder_content' ), 10, 1 );
+
+				$this->filter_content = true;
 			}
 
-			//check if we have at least 2 pages...
-			if(count($pages) > 1)
+			return $this->split_string;
+		}
+
+		/**
+		 * Get page content according to requested page
+		 *
+		 * @since 4.8.8				moved inside class
+		 * @param string $content
+		 * @return string
+		 */
+		public function handler_avf_template_builder_content( $content )
+		{
+			/*
+			 * remove WP default paging used in wp_link_pages()
+			 */
+			global $multipage, $numpages;
+
+			$numpages = 1;
+			$multipage = 0;
+
+			$page = avia_get_current_pagination_number( 'avia-element-paging' );
+
+			if( false === strpos( $content, $this->split_string ) )
 			{
-				$current_page = (int)$page - 1;
-				if(isset($pages[$current_page])) $content = $pages[$current_page];
+				return $content;
+			}
+
+			$content = trim( $content );
+
+			$content = str_replace( "\n{$this->split_string}\n", $this->split_string, $content );
+			$content = str_replace( "\n{$this->split_string}", $this->split_string, $content );
+			$content = str_replace( "{$this->split_string}\n", $this->split_string, $content );
+
+			// Ignore nextpage at the beginning of the content.
+			if ( 0 === strpos( $content, $this->split_string ) )
+			{
+				$content = substr( $content, strlen( $this->split_string ) );
+			}
+
+			$content_pages = explode( $this->split_string, $content );
+			$total_pages = count( $content_pages );
+
+			//check if we have at least 2 pages...
+			if( $total_pages > 1 )
+			{
+				$index = $page - 1;
+
+				if( isset( $content_pages[ $index ] ) )
+				{
+					$content = $content_pages[ $index ];
+
+					add_filter( 'avf_pagination_link_method', array( $this, 'handler_avf_pagination_link_method' ), 500, 4 );
+
+					$content .= avia_pagination( $total_pages, 'nav', 'avia-element-paging', $page );
+
+					remove_filter( 'avf_pagination_link_method', array( $this, 'handler_avf_pagination_link_method' ), 500 );
+				}
 			}
 
 			return $content;
 		}
+
+		/**
+		 * Reset method (e.g. for portfolio 'avia_post_pagination_link' is used)
+		 *
+		 * @since 4.8.8
+		 * @param string $method
+		 * @param int|string $pages
+		 * @param string $wrapper
+		 * @param string $query_arg
+		 * @return string
+		 */
+		public function handler_avf_pagination_link_method( $method, $pages, $wrapper, $query_arg )
+		{
+			return 'get_pagenum_link';
+		}
 	}
 }
+

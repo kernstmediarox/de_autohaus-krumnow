@@ -300,6 +300,10 @@ $chars['entypo-fontello']['ue927'] = 'ue927';
 $chars['entypo-fontello']['ue928'] = 'ue928';
 $chars['entypo-fontello']['ue92a'] = 'ue92a';
 $chars['entypo-fontello']['ue929'] = 'ue929';
-
-
-
+$chars['entypo-fontello']['uf232'] = 'uf232';
+$chars['entypo-fontello']['uf16d'] = 'uf16d';
+$chars['entypo-fontello']['uf1e9'] = 'uf1e9';
+$chars['entypo-fontello']['uf16a'] = 'uf16a';
+$chars['entypo-fontello']['ue930'] = 'ue930';
+$chars['entypo-fontello']['ue932'] = 'ue932';
+$chars['entypo-fontello']['ue933'] = 'ue933';

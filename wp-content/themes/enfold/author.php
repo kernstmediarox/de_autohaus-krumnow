@@ -1,6 +1,6 @@
 <?php
-	if ( !defined('ABSPATH') ){ die(); }
-	
+	if( ! defined( 'ABSPATH' ) ) {	die();	}
+
 	global $avia_config, $more;
 
 	/*
@@ -8,24 +8,40 @@
 	*/
 	get_header();
 
-
 	$description = is_tag() ? tag_description() : category_description();
-	echo avia_title(array('title' => avia_which_archive(), 'subtitle' => $description, 'link'=>false));
+	$author_id = get_query_var( 'author' );
 
-	$author_id    = get_query_var( 'author' );
-	$name         = apply_filters('avf_author_name', get_the_author_meta('display_name', $author_id), $author_id);
-	$heading_s    = __("Entries by",'avia_framework') ." ".$name;
+	/**
+	 * Filter author data
+	 *
+	 * @param string
+	 * @param int $author_id
+	 * @param string $context		added with 4.7.5.1
+	 * @return string
+	 */
+	$name = apply_filters( 'avf_author_name', get_the_author_meta( 'display_name', $author_id ), $author_id, 'author.php' );
+
+	$heading_s = __( 'Entries by', 'avia_framework' ) . ' ' . $name;
+
+	echo avia_title( array( 'title' => avia_which_archive(), 'subtitle' => $description, 'link' => false ) );
 
 	do_action( 'ava_after_main_title' );
+
+	/**
+	 * @since 5.6.7
+	 * @param string $main_class
+	 * @param string $context					file name
+	 * @return string
+	 */
+	$main_class = apply_filters( 'avf_custom_main_classes', 'av-main-' . basename( __FILE__, '.php' ), basename( __FILE__ ) );
+
 	?>
-
-
 
 		<div class='container_wrap container_wrap_first main_color <?php avia_layout_class( 'main' ); ?>'>
 
 			<div class='container template-blog template-author '>
 
-				<main class='content <?php avia_layout_class( 'content' ); ?> units' <?php avia_markup_helper(array('context' => 'content'));?>>
+				<main class='content <?php avia_layout_class( 'content' ); ?> units <?php echo $main_class; ?>' <?php avia_markup_helper( array( 'context' => 'content' ) );?>>
 
                     <div class='page-heading-container clearfix'>
                     <?php
@@ -35,18 +51,13 @@
                     ?>
                     </div>
 
-
                     <?php
                     echo "<h4 class='extra-mini-title widgettitle'>{$heading_s}</h4>";
-
-
 
                     /* Run the loop to output the posts.
                     * If you want to overload this in a child theme then include a file
                     * called loop-index.php and that will be used instead.
                     */
-
-
                     $more = 0;
                     get_template_part( 'includes/loop', 'author' );
                     ?>
@@ -66,7 +77,5 @@
 
 		</div><!-- close default .container_wrap element -->
 
-
-
-
-<?php get_footer(); ?>
+<?php
+	get_footer();

@@ -1,35 +1,41 @@
 <?php
-	if ( !defined('ABSPATH') ){ die(); }
-	
+	if( ! defined( 'ABSPATH' ) ) { die(); }
+
 	global $avia_config;
 
 	/*
 	 * get_header is a basic wordpress function, used to retrieve the header.php file in your theme directory.
 	 */
-	 get_header();
+	get_header();
 
 
-	 echo avia_title(array('title' => __('Error 404 - page not found', 'avia_framework')));
-	 
-	 do_action( 'ava_after_main_title' );
+	echo avia_title( array( 'title' => __( 'Error 404 - page not found', 'avia_framework' ) ) );
+
+	do_action( 'ava_after_main_title' );
+
+	/**
+	 * @since 5.6.7
+	 * @param string $main_class
+	 * @param string $context					file name
+	 * @return string
+	 */
+	$main_class = apply_filters( 'avf_custom_main_classes', 'av-main-' . basename( __FILE__, '.php' ), basename( __FILE__ ) );
+
 	?>
-
-
 		<div class='container_wrap container_wrap_first main_color <?php avia_layout_class( 'main' ); ?>'>
-			
-			<?php 
-				do_action('avia_404_extra'); // allows user to hook into 404 page fr extra functionallity. eg: send mail that page is missing, output additional information
+
+			<?php
+				do_action( 'avia_404_extra' ); // allows user to hook into 404 page for extra functionallity. eg: send mail that page is missing, output additional information
 			?>
-			
+
 			<div class='container'>
 
-				<main class='template-page content <?php avia_layout_class( 'content' ); ?> units' <?php avia_markup_helper(array('context' => 'content'));?>>
-
+				<main class='template-page content <?php avia_layout_class( 'content' ); ?> units <?php echo $main_class; ?>' <?php avia_markup_helper( array( 'context' => 'content' ) );?>>
 
                     <div class="entry entry-content-wrapper clearfix" id='search-fail'>
                     <?php
 
-                    get_template_part('includes/error404');
+						get_template_part( 'includes/error404' );
 
                     ?>
                     </div>
@@ -41,7 +47,7 @@
 
 				//get the sidebar
 				$avia_config['currently_viewing'] = 'page';
-				get_sidebar();
+				//get_sidebar();
 
 				?>
 
@@ -49,7 +55,5 @@
 
 		</div><!-- close default .container_wrap element -->
 
-
-
-
-<?php get_footer(); ?>
+<?php
+		get_footer();

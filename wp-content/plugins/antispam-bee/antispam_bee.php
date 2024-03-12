@@ -1,255 +1,340 @@
 <?php
-/*
-Plugin Name: Antispam Bee
-Description: Easy and extremely productive spam-fighting plugin with many sophisticated solutions. Includes protection against trackback spam.
-Author:      pluginkollektiv
-Author URI:  http://pluginkollektiv.org
-Plugin URI:  https://wordpress.org/plugins/antispam-bee/
-Text Domain: antispam-bee
-Domain Path: /lang
-License:     GPLv2 or later
-License URI: http://www.gnu.org/licenses/gpl-2.0.html
-Version:     2.6.9
-*/
+/**
+ * Plugin Name: Antispam Bee
+ * Description: Antispam plugin with a sophisticated toolset for effective day to day comment and trackback spam-fighting. Built with data protection and privacy in mind.
+ * Author:      pluginkollektiv
+ * Author URI:  https://pluginkollektiv.org
+ * Plugin URI:  https://antispambee.pluginkollektiv.org/
+ * Text Domain: antispam-bee
+ * Domain Path: /lang
+ * License:     GPLv2 or later
+ * License URI: http://www.gnu.org/licenses/gpl-2.0.html
+ * Version:     2.11.5
+ *
+ * @package Antispam Bee
+ **/
 
 /*
-Copyright (C)  2009-2015 Sergej Müller
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation; either version 2 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License along
-with this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+* Copyright (C)  2009-2015 Sergej Müller
+*
+* This program is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License as published by
+* the Free Software Foundation; either version 2 of the License, or
+* (at your option) any later version.
+*
+* This program is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+* GNU General Public License for more details.
+*
+* You should have received a copy of the GNU General Public License along
+* with this program; if not, write to the Free Software Foundation, Inc.,
+* 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
 
-/* Sicherheitsabfrage */
-if ( ! class_exists('WP') ) {
-	die();
-}
-
+// Make sure this file is only run from within the WordPress context.
+defined( 'ABSPATH' ) || exit;
 
 /**
-* Antispam_Bee
-*
-* @since   0.1
-* @change  2.4
-*/
-
+ * Antispam_Bee
+ *
+ * @since  0.1
+ * @since  2.4
+ */
 class Antispam_Bee {
 
-
-	/* Init */
+	/**
+	 * The option defaults.
+	 *
+	 * @var array
+	 */
 	public static $defaults;
-	private static $_base;
-	private static $_secret;
-	private static $_reason;
-
 
 	/**
-	* "Konstruktor" der Klasse
-	*
-	* @since   0.1
-	* @change  2.6.4
-	*/
+	 * Which internal datastructure version we are running on.
+	 *
+	 * @var int
+	 */
+	private static $db_version = 1.02;
 
-  	public static function init()
-  	{
-  		/* Delete spam reason */
-  		add_action(
-  			'unspam_comment',
-  			array(
-  				__CLASS__,
-  				'delete_spam_reason_by_comment'
-  			)
-  		);
+	/**
+	 * The base.
+	 *
+	 * @var string
+	 */
+	private static $_base;
 
-		/* AJAX & Co. */
-		if ( (defined('DOING_AJAX') && DOING_AJAX) or (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) ) {
+	/**
+	 * The salt.
+	 *
+	 * @var string
+	 */
+	private static $_salt;
+
+	/**
+	 * The spam reason.
+	 *
+	 * @var string
+	 */
+	private static $_reason;
+
+	/**
+	 * The current Post ID.
+	 *
+	 * @var int
+	 */
+	private static $_current_post_id;
+
+	/**
+	 * "Constructor" of the class
+	 *
+	 * @since  0.1
+	 * @since  2.6.4
+	 * @since  2.10.0 Change handling of comment field honeypot and call functions after completed upgrades
+	 * @since  2.11.0 Change priority from default 10 to 99 for comment_form_field_comment
+	 */
+	public static function init() {
+		add_action(
+			'upgrader_process_complete',
+			array(
+				__CLASS__,
+				'upgrades_completed',
+			),
+			10,
+			2
+		);
+
+		add_action(
+			'upgrader_overwrote_package',
+			array(
+				__CLASS__,
+				'uploaded_upgrade_completed',
+			),
+			10,
+			3
+		);
+
+		add_action(
+			'unspam_comment',
+			array(
+				__CLASS__,
+				'delete_spam_reason_by_comment',
+			)
+		);
+
+		add_action(
+			'comment_unapproved_to_spam',
+			array(
+				__CLASS__,
+				'update_antispam_bee_reason',
+			)
+		);
+
+		add_action(
+			'comment_approved_to_spam',
+			array(
+				__CLASS__,
+				'update_antispam_bee_reason',
+			)
+		);
+
+		$disallow_ajax = apply_filters( 'antispam_bee_disallow_ajax_calls', true );
+
+		if ( defined( 'DOING_AJAX' ) && DOING_AJAX && $disallow_ajax ) {
 			return;
 		}
 
-		/* Initialisierung */
+		if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
+			return;
+		}
+
 		self::_init_internal_vars();
 
-		/* Cronjob */
-		if ( defined('DOING_CRON') ) {
+		if ( self::_current_page( 'dashboard' ) || self::_current_page( 'plugins' ) || self::_current_page( 'options' ) || self::_current_page( 'edit-comments' ) || self::_current_page( 'admin-post' ) ) {
+			self::load_plugin_lang();
+			self::add_reasons_to_defaults();
+		}
+
+		if ( defined( 'DOING_CRON' ) ) {
 			add_action(
 				'antispam_bee_daily_cronjob',
 				array(
 					__CLASS__,
-					'start_daily_cronjob'
+					'start_daily_cronjob',
 				)
 			);
 
-		/* Admin */
 		} elseif ( is_admin() ) {
-			/* Menü */
 			add_action(
 				'admin_menu',
 				array(
 					__CLASS__,
-					'add_sidebar_menu'
+					'add_sidebar_menu',
 				)
 			);
 
-			/* Dashboard */
-			if ( self::_current_page('dashboard') ) {
-				add_action(
-					'init',
-					array(
-						__CLASS__,
-						'load_plugin_lang'
-					)
-				);
+			if ( self::_current_page( 'dashboard' ) ) {
 				add_filter(
 					'dashboard_glance_items',
 					array(
 						__CLASS__,
-						'add_dashboard_count'
+						'add_dashboard_count',
 					)
 				);
 				add_action(
 					'wp_dashboard_setup',
 					array(
 						__CLASS__,
-						'add_dashboard_chart'
+						'add_dashboard_chart',
 					)
 				);
 
-			/* Plugins */
-			} else if ( self::_current_page('plugins') ) {
-				add_action(
-					'init',
-					array(
-						__CLASS__,
-						'load_plugin_lang'
-					)
-				);
+			} elseif ( self::_current_page( 'plugins' ) ) {
 				add_filter(
 					'plugin_row_meta',
 					array(
 						__CLASS__,
-						'init_row_meta'
+						'init_row_meta',
 					),
 					10,
 					2
 				);
 				add_filter(
-					'plugin_action_links_' .self::$_base,
+					'plugin_action_links_' . self::$_base,
 					array(
 						__CLASS__,
-						'init_action_links'
+						'init_action_links',
 					)
 				);
 
-			/* Optionen */
-			} else if ( self::_current_page('options') ) {
+			} elseif ( self::_current_page( 'options' ) ) {
 				add_action(
 					'admin_init',
 					array(
 						__CLASS__,
-						'load_plugin_lang'
+						'init_plugin_sources',
 					)
 				);
 				add_action(
 					'admin_init',
 					array(
 						__CLASS__,
-						'init_plugin_sources'
+						'update_database',
 					)
 				);
 
-			} else if ( self::_current_page('admin-post') ) {
-				require_once( dirname(__FILE__). '/inc/gui.class.php' );
+			} elseif ( self::_current_page( 'admin-post' ) ) {
+				require_once dirname( __FILE__ ) . '/inc/gui.class.php';
 
 				add_action(
 					'admin_post_ab_save_changes',
 					array(
 						'Antispam_Bee_GUI',
-						'save_changes'
+						'save_changes',
 					)
 				);
 
-			} else if ( self::_current_page('edit-comments') ) {
-				if ( ! empty($_GET['comment_status']) && $_GET['comment_status'] === 'spam' && ! self::get_option('no_notice') ) {
-					/* Include file */
-					require_once( dirname(__FILE__). '/inc/columns.class.php' );
+			} elseif ( self::_current_page( 'edit-comments' ) ) {
+				// phpcs:disable WordPress.CSRF.NonceVerification.NoNonceVerification
+				if ( ! empty( $_GET['comment_status'] ) && 'spam' === $_GET['comment_status'] && ! self::get_option( 'no_notice' ) ) {
+					// phpcs:enable WordPress.CSRF.NonceVerification.NoNonceVerification
+					require_once dirname( __FILE__ ) . '/inc/columns.class.php';
 
-					/* Load textdomain */
-					self::load_plugin_lang();
-
-					/* Add plugin columns */
 					add_filter(
 						'manage_edit-comments_columns',
 						array(
 							'Antispam_Bee_Columns',
-							'register_plugin_columns'
+							'register_plugin_columns',
 						)
 					);
 					add_filter(
 						'manage_comments_custom_column',
 						array(
 							'Antispam_Bee_Columns',
-							'print_plugin_column'
+							'print_plugin_column',
 						),
 						10,
 						2
 					);
 					add_filter(
-					    'admin_print_styles-edit-comments.php',
-					    array(
-					    	'Antispam_Bee_Columns',
-					    	'print_column_styles'
-					    )
+						'admin_print_styles-edit-comments.php',
+						array(
+							'Antispam_Bee_Columns',
+							'print_column_styles',
+						)
 					);
 
 					add_filter(
 						'manage_edit-comments_sortable_columns',
 						array(
 							'Antispam_Bee_Columns',
-							'register_sortable_columns'
+							'register_sortable_columns',
 						)
 					);
 					add_action(
-						'pre_get_posts',
+						'pre_get_comments',
 						array(
 							'Antispam_Bee_Columns',
-							'set_orderby_query'
+							'set_orderby_query',
+						)
+					);
+					add_action(
+						'restrict_manage_comments',
+						array(
+							'Antispam_Bee_Columns',
+							'filter_columns',
+						)
+					);
+					add_action(
+						'pre_get_comments',
+						array(
+							'Antispam_Bee_Columns',
+							'filter_by_spam_reason',
 						)
 					);
 				}
 			}
-
-		/* Frontend */
 		} else {
 			add_action(
-				'template_redirect',
+				'wp',
 				array(
 					__CLASS__,
-					'prepare_comment_field'
+					'populate_post_id',
 				)
 			);
+
+			if ( 1 == self::get_option( 'use_output_buffer' ) || null === self::get_option( 'use_output_buffer' ) ) {
+				add_action(
+					'template_redirect',
+					array(
+						__CLASS__,
+						'prepare_comment_field_output_buffering',
+					)
+				);
+			} else {
+				add_filter(
+					'comment_form_field_comment',
+					array(
+						__CLASS__,
+						'prepare_comment_field',
+					),
+					99
+				);
+			}
+
 			add_action(
 				'init',
 				array(
 					__CLASS__,
-					'precheck_incoming_request'
+					'precheck_incoming_request',
 				)
 			);
 			add_action(
 				'preprocess_comment',
 				array(
 					__CLASS__,
-					'handle_incoming_request'
+					'handle_incoming_request',
 				),
 				1
 			);
@@ -257,7 +342,7 @@ class Antispam_Bee {
 				'antispam_bee_count',
 				array(
 					__CLASS__,
-					'the_spam_count'
+					'the_spam_count',
 				)
 			);
 		}
@@ -265,217 +350,243 @@ class Antispam_Bee {
 
 
 
-
-	############################
-	########  INSTALL  #########
-	############################
-
-
-	/**
-	* Aktion bei der Aktivierung des Plugins
-	*
-	* @since   0.1
-	* @change  2.4
+	/*
+	*   ############################
+	*   ########  INSTALL  #########
+	*   ############################
 	*/
 
-	public static function activate()
-	{
-		/* Option anlegen */
+	/**
+	 * Action during the activation of the Plugins
+	 *
+	 * @since  0.1
+	 * @since  2.4
+	 * @since  2.10.0 Set `use_output_buffer` option to `0`
+	 */
+	public static function activate() {
 		add_option(
 			'antispam_bee',
-			array(),
+			array(
+				'use_output_buffer' => 0,
+			),
 			'',
 			'no'
 		);
 
-		/* Cron aktivieren */
-		if ( self::get_option('cronjob_enable') ) {
+		if ( self::get_option( 'cronjob_enable' ) ) {
 			self::init_scheduled_hook();
 		}
 	}
 
 
 	/**
-	* Aktion bei der Deaktivierung des Plugins
-	*
-	* @since   0.1
-	* @change  2.4
-	*/
-
-	public static function deactivate()
-	{
+	 * Action to deactivate the plugin
+	 *
+	 * @since  0.1
+	 * @since  2.4
+	 */
+	public static function deactivate() {
 		self::clear_scheduled_hook();
 	}
 
 
 	/**
-	* Aktion beim Löschen des Plugins
-	*
-	* @since   2.4
-	* @change  2.4
-	*/
-
-	public static function uninstall()
-	{
-		/* Global */
+	 * Action deleting the plugin
+	 *
+	 * @since  2.4
+	 */
+	public static function uninstall() {
+		if ( ! self::get_option( 'delete_data_on_uninstall' ) ) {
+			return;
+		}
 		global $wpdb;
 
-		/* Remove settings */
-		delete_option('antispam_bee');
+		delete_option( 'antispam_bee' );
+		$wpdb->query( 'OPTIMIZE TABLE `' . $wpdb->options . '`' );
 
-		/* Clean DB */
-		$wpdb->query("OPTIMIZE TABLE `" .$wpdb->options. "`");
+		//phpcs:disable WordPress.DB.PreparedSQL.NotPrepared
+		$sql = 'delete from `' . $wpdb->commentmeta . '` where `meta_key` IN ("antispam_bee_iphash", "antispam_bee_reason")';
+		$wpdb->query( $sql );
+		//phpcs:enable WordPress.DB.PreparedSQL.NotPrepared
 	}
 
 
 
-
-	############################
-	#########  INTERN  #########
-	############################
-
-
-	/**
-	* Initialisierung der internen Variablen
-	*
-	* @since   2.4
-	* @change  2.6.5
+	/*
+	*   ############################
+	*   ########  INTERNAL  ########
+	*   ############################
 	*/
 
-	private static function _init_internal_vars()
-	{
-		self::$_base   = plugin_basename(__FILE__);
-		self::$_secret = substr(md5(get_bloginfo('url')), 0, 5). '-comment';
+	/**
+	 * Initialization of the internal variables
+	 *
+	 * @since  2.4
+	 * @since  2.7.0
+	 * @since  2.10.0 Change renamed country option names in options array
+	 */
+	private static function _init_internal_vars() {
+		self::$_base = plugin_basename( __FILE__ );
+
+		$salt        = defined( 'NONCE_SALT' ) ? NONCE_SALT : ABSPATH;
+		self::$_salt = substr( sha1( $salt ), 0, 10 );
 
 		self::$defaults = array(
 			'options' => array(
-				/* Allgemein */
-				'advanced_check' 	=> 1,
-				'regexp_check'		=> 1,
-				'spam_ip' 			=> 1,
-				'already_commented'	=> 1,
-				'gravatar_check'	=> 0,
-				'time_check'		=> 0,
-				'ignore_pings' 		=> 0,
-				'always_allowed' 	=> 0,
+				'regexp_check'             => 1,
+				'spam_ip'                  => 1,
+				'already_commented'        => 1,
+				'gravatar_check'           => 0,
+				'time_check'               => 0,
+				'ignore_pings'             => 0,
 
-				'dashboard_chart' 	=> 0,
-				'dashboard_count' 	=> 0,
+				'dashboard_chart'          => 0,
+				'dashboard_count'          => 0,
 
-				/* Filter */
-				'dnsbl_check'		=> 0,
-				'bbcode_check'		=> 1,
+				'country_code'             => 0,
+				'country_denied'           => '',
+				'country_allowed'          => '',
 
-				/* Erweitert */
-				'flag_spam' 		=> 1,
-				'email_notify' 		=> 1,
-				'no_notice' 		=> 0,
-				'cronjob_enable' 	=> 0,
-				'cronjob_interval'	=> 0,
+				'translate_api'            => 0,
+				'translate_lang'           => array(),
 
-				'ignore_filter' 	=> 0,
-				'ignore_type' 		=> 0,
+				'bbcode_check'             => 1,
 
-				'reasons_enable'	=> 0,
-				'ignore_reasons'	=> array()
+				'flag_spam'                => 1,
+				'email_notify'             => 0,
+				'no_notice'                => 0,
+				'cronjob_enable'           => 0,
+				'cronjob_interval'         => 0,
+
+				'ignore_filter'            => 0,
+				'ignore_type'              => 0,
+
+				'reasons_enable'           => 0,
+				'ignore_reasons'           => array(),
+
+				'delete_data_on_uninstall' => 1,
 			),
-			'reasons' => array(
-				'css'		=> 'CSS Hack',
-				'time'		=> 'Comment time',
-				'empty'		=> 'Empty Data',
-				'server'	=> 'Fake IP',
-				'localdb'	=> 'Local DB Spam',
-				'dnsbl'		=> 'DNSBL Spam',
-				'bbcode'	=> 'BBCode',
-				'regexp'	=> 'RegExp'
-			)
 		);
 	}
 
+	/**
+	 * Adds spam reason labels to the `$defaults` array.
+	 *
+	 * That is done in an extra method instead of `_init_internal_vars`
+	 * so that the translations are loaded before.
+	 *
+	 * @since 2.11.2
+	 */
+	private static function add_reasons_to_defaults() {
+		self::$defaults['reasons'] = array(
+			'css'           => esc_attr__( 'Honeypot', 'antispam-bee' ),
+			'time'          => esc_attr__( 'Comment time', 'antispam-bee' ),
+			'empty'         => esc_attr__( 'Empty Data', 'antispam-bee' ),
+			'localdb'       => esc_attr__( 'Local DB Spam', 'antispam-bee' ),
+			'server'        => esc_attr__( 'Fake IP', 'antispam-bee' ),
+			'country'       => esc_attr__( 'Country Check', 'antispam-bee' ),
+			'bbcode'        => esc_attr__( 'BBCode', 'antispam-bee' ),
+			'lang'          => esc_attr__( 'Comment Language', 'antispam-bee' ),
+			'regexp'        => esc_attr__( 'Regular Expression', 'antispam-bee' ),
+			'title_is_name' => esc_attr__( 'Identical Post title and blog title', 'antispam-bee' ),
+			'manually'      => esc_attr__( 'Manually', 'antispam-bee' ),
+		);
+	}
 
 	/**
-	* Prüfung und Rückgabe eines Array-Keys
-	*
-	* @since   2.4.2
-	* @change  2.4.2
-	*
-	* @param   array   $array  Array mit Werten
-	* @param   string  $key    Name des Keys
-	* @return  mixed           Wert des angeforderten Keys
-	*/
-
-	public static function get_key($array, $key)
-	{
-		if ( empty($array) or empty($key) or empty($array[$key]) ) {
+	 * Check and return an array key
+	 *
+	 * @since   2.4.2
+	 * @since   2.10.0 Only return `null` if option does not exist.
+	 *
+	 * @param   array  $array Array with values.
+	 * @param   string $key   Name of the key.
+	 * @return  mixed         Value of the requested key.
+	 */
+	public static function get_key( $array, $key ) {
+		if ( empty( $array ) || empty( $key ) || ! isset( $array[ $key ] ) ) {
 			return null;
 		}
 
-		return $array[$key];
+		return $array[ $key ];
 	}
 
+	/**
+	 * Check if comment is a ping (pingback, trackback or something similar)
+	 *
+	 * @since   2.10.0
+	 *
+	 * @param   array $comment Treated commentary data.
+	 * @return  boolean        `true` if ping and `false` if classic comment
+	 */
+	public static function is_ping( $comment ) {
+		$types   = array( 'pingback', 'trackback', 'pings' );
+		$is_ping = false;
+
+		if ( in_array( self::get_key( $comment, 'comment_type' ), $types, true ) ) {
+			$is_ping = true;
+		}
+
+		return apply_filters( 'antispam_bee_is_ping', $is_ping, $comment );
+	}
 
 	/**
-	* Lokalisierung der Admin-Seiten
-	*
-	* @since   0.1
-	* @change  2.4
-	*
-	* @param   string   $page  Kennzeichnung der Seite
-	* @return  boolean         TRUE Bei Erfolg
-	*/
-
-	private static function _current_page($page)
-	{
-		switch ($page) {
+	 * Localization of the admin pages
+	 *
+	 * @since   0.1
+	 * @since   2.4
+	 *
+	 * @param   string $page Mark the page.
+	 * @return  boolean      True on success.
+	 */
+	private static function _current_page( $page ) {
+		// phpcs:disable WordPress.CSRF.NonceVerification.NoNonceVerification
+		switch ( $page ) {
 			case 'dashboard':
-				return ( empty($GLOBALS['pagenow']) or ( !empty($GLOBALS['pagenow']) && $GLOBALS['pagenow'] == 'index.php' ) );
+				return ( empty( $GLOBALS['pagenow'] ) || ( ! empty( $GLOBALS['pagenow'] ) && 'index.php' === $GLOBALS['pagenow'] ) );
 
 			case 'options':
-				return ( !empty($_GET['page']) && $_GET['page'] == 'antispam_bee' );
+				return ( ! empty( $_GET['page'] ) && 'antispam_bee' === $_GET['page'] );
 
 			case 'plugins':
-				return ( !empty($GLOBALS['pagenow']) && $GLOBALS['pagenow'] == 'plugins.php' );
+				return ( ! empty( $GLOBALS['pagenow'] ) && 'plugins.php' === $GLOBALS['pagenow'] );
 
 			case 'admin-post':
-				return ( !empty($GLOBALS['pagenow']) && $GLOBALS['pagenow'] == 'admin-post.php' );
+				return ( ! empty( $GLOBALS['pagenow'] ) && 'admin-post.php' === $GLOBALS['pagenow'] );
 
 			case 'edit-comments':
-				return ( !empty($GLOBALS['pagenow']) && $GLOBALS['pagenow'] == 'edit-comments.php' );
+				return ( ! empty( $GLOBALS['pagenow'] ) && 'edit-comments.php' === $GLOBALS['pagenow'] );
 
 			default:
 				return false;
 		}
+		// phpcs:enable WordPress.CSRF.NonceVerification.NoNonceVerification
 	}
 
 
 	/**
-	* Einbindung der Sprachdatei
-	*
-	* @since   0.1
-	* @change  2.4
-	*/
-
-	public static function load_plugin_lang()
-	{
+	 * Integration of the localization file
+	 *
+	 * @since  0.1
+	 * @since  2.4
+	 */
+	public static function load_plugin_lang() {
 		load_plugin_textdomain(
-			'antispam-bee',
-			false,
-			'antispam-bee/lang'
+			'antispam-bee'
 		);
 	}
 
 
 	/**
-	* Hinzufügen des Links zu den Einstellungen
-	*
-	* @since   1.1
-	* @change  1.1
-	*/
-
-	public static function init_action_links($data)
-	{
-		/* Rechte? */
-		if ( ! current_user_can('manage_options') ) {
+	 * Add the link to the settings
+	 *
+	 * @since  1.1
+	 *
+	 * @param array $data The action link array.
+	 * @return array $data The action link array.
+	 */
+	public static function init_action_links( $data ) {
+		if ( ! current_user_can( 'manage_options' ) ) {
 			return $data;
 		}
 
@@ -486,91 +597,78 @@ class Antispam_Bee {
 					'<a href="%s">%s</a>',
 					add_query_arg(
 						array(
-							'page' => 'antispam_bee'
+							'page' => 'antispam_bee',
 						),
-						admin_url('options-general.php')
+						admin_url( 'options-general.php' )
 					),
-					__('Settings', 'antispam-bee')
-				)
+					esc_attr__( 'Settings', 'antispam-bee' )
+				),
 			)
 		);
 	}
 
-
 	/**
-	* Meta-Links des Plugins
-	*
-	* @since   0.1
-	* @change  2.6.2
-	*
-	* @param   array   $input  Bereits vorhandene Links
-	* @param   string  $file   Aktuelle Seite
-	* @return  array   $data   Modifizierte Links
-	*/
-
-	public static function init_row_meta($input, $file)
-	{
-		/* Rechte */
-		if ( $file != self::$_base ) {
+	 * Meta links of the plugin
+	 *
+	 * @since  0.1
+	 * @since  2.6.2
+	 *
+	 * @param   array  $input Existing links.
+	 * @param   string $file  Current page.
+	 * @return  array  $data  Modified links.
+	 */
+	public static function init_row_meta( $input, $file ) {
+		if ( $file !== self::$_base ) {
 			return $input;
 		}
 
 		return array_merge(
 			$input,
 			array(
-				'<a href="https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=8CH5FPR88QYML" target="_blank">PayPal</a>',
+				'<a href="https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=TD4AMD2D8EMZW" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Donate', 'antispam-bee' ) . '</a>',
+				'<a href="https://wordpress.org/support/plugin/antispam-bee" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Support', 'antispam-bee' ) . '</a>',
 			)
 		);
 	}
 
-
-
-
-	############################
-	#######  RESSOURCEN  #######
-	############################
-
-
-	/**
-	* Registrierung von Ressourcen (CSS & JS)
-	*
-	* @since   1.6
-	* @change  2.4.5
+	/*
+	*   ############################
+	*   #######  RESOURCES  ########
+	*   ############################
 	*/
 
-	public static function init_plugin_sources()
-	{
-		/* Infos auslesen */
-		$plugin = get_plugin_data(__FILE__);
+	/**
+	 * Registration of resources (CSS & JS)
+	 *
+	 * @since  1.6
+	 * @since  2.4.5
+	 */
+	public static function init_plugin_sources() {
+		$plugin = get_plugin_data( __FILE__ );
 
-		/* JS einbinden */
 		wp_register_script(
 			'ab_script',
-			plugins_url('js/scripts.min.js', __FILE__),
-			array('jquery'),
+			plugins_url( 'js/scripts.min.js', __FILE__ ),
+			array( 'jquery' ),
 			$plugin['Version']
 		);
 
-		/* CSS einbinden */
 		wp_register_style(
 			'ab_style',
-			plugins_url('css/styles.min.css', __FILE__),
-			array(),
+			plugins_url( 'css/styles.min.css', __FILE__ ),
+			array( 'dashicons' ),
 			$plugin['Version']
 		);
 	}
 
 
 	/**
-	* Initialisierung der Optionsseite
-	*
-	* @since   0.1
-	* @change  2.4.3
-	*/
-
-	public static function add_sidebar_menu()
-	{
-		/* Menü anlegen */
+	 * Initialization of the option page
+	 *
+	 * @since  0.1
+	 * @since  2.4.3
+	 */
+	public static function add_sidebar_menu() {
 		$page = add_options_page(
 			'Antispam Bee',
 			'Antispam Bee',
@@ -578,197 +676,164 @@ class Antispam_Bee {
 			'antispam_bee',
 			array(
 				'Antispam_Bee_GUI',
-				'options_page'
+				'options_page',
 			)
 		);
 
-		/* JS einbinden */
 		add_action(
 			'admin_print_scripts-' . $page,
 			array(
 				__CLASS__,
-				'add_options_script'
+				'add_options_script',
 			)
 		);
 
-		/* CSS einbinden */
 		add_action(
 			'admin_print_styles-' . $page,
 			array(
 				__CLASS__,
-				'add_options_style'
+				'add_options_style',
 			)
 		);
 
-		/* PHP laden */
 		add_action(
-			'load-' .$page,
+			'load-' . $page,
 			array(
 				__CLASS__,
-				'init_options_page'
+				'init_options_page',
 			)
 		);
 	}
 
 
 	/**
-	* Initialisierung von JavaScript
-	*
-	* @since   1.6
-	* @change  2.4
-	*/
-
-	public static function add_options_script()
-	{
-		wp_enqueue_script('ab_script');
+	 * Initialization of JavaScript
+	 *
+	 * @since  1.6
+	 * @since  2.4
+	 */
+	public static function add_options_script() {
+		wp_enqueue_script( 'ab_script' );
 	}
 
 
 	/**
-	* Initialisierung von Stylesheets
-	*
-	* @since   1.6
-	* @change  2.4
-	*/
-
-	public static function add_options_style()
-	{
-		wp_enqueue_style('ab_style');
+	 * Initialization of Stylesheets
+	 *
+	 * @since  1.6
+	 * @since  2.4
+	 */
+	public static function add_options_style() {
+		wp_enqueue_style( 'ab_style' );
 	}
 
 
 	/**
-	* Einbindung der GUI
-	*
-	* @since   2.4
-	* @change  2.4
-	*/
-
-	public static function init_options_page()
-	{
-		require_once( dirname(__FILE__). '/inc/gui.class.php' );
+	 * Integration of the GUI
+	 *
+	 * @since   2.4
+	 */
+	public static function init_options_page() {
+		require_once dirname( __FILE__ ) . '/inc/gui.class.php';
 	}
 
 
 
-
-	############################
-	#######  DASHBOARD  ########
-	############################
-
-
-	/**
-	* Anzeige des Spam-Counters auf dem Dashboard
-	*
-	* @since   0.1
-	* @change  2.6.5
-	*
-	* @param   array  $items  Initial array with dashboard items
-    * @return  array  $items  Merged array with dashboard items
+	/*
+	*   ############################
+	*   #######  DASHBOARD  ########
+	*   ############################
 	*/
 
-	public static function add_dashboard_count( $items = array() )
-	{
-		/* Skip */
-        if ( ! current_user_can('manage_options') OR ! self::get_option('dashboard_count') ) {
-            return $items;
-        }
+	/**
+	 * Display the spam counter on the dashboard
+	 *
+	 * @since  0.1
+	 * @since  2.6.5
+	 *
+	 * @param   array $items  Initial array with dashboard items.
+	 * @return  array $items  Merged array with dashboard items.
+	 */
+	public static function add_dashboard_count( $items = array() ) {
+		if ( ! current_user_can( 'manage_options' ) || ! self::get_option( 'dashboard_count' ) ) {
+			return $items;
+		}
 
-        /* Icon styling */
-        echo '<style>#dashboard_right_now .ab-count:before {content: "\f117"}</style>';
+		echo '<style>#dashboard_right_now .ab-count:before {content: "\f117"}</style>';
 
-        /* Right now item */
-        $items[] = sprintf(
-        	'<a href="%s" class="ab-count">%s %s</a>',
-        	add_query_arg(
-        	    array(
-        	        'page' => 'antispam_bee'
-        	    ),
-        	    admin_url('options-general.php')
-        	),
-        	esc_html( self::_get_spam_count() ),
-        	esc_html__('Blocked', 'antispam-bee')
-        );
+		$items[] = '<span class="ab-count">' . esc_html(
+			sprintf(
+				// translators: The number of spam comments Antispam Bee blocked so far.
+				__( '%s Blocked', 'antispam-bee' ),
+				self::_get_spam_count()
+			)
+		) . '</span>';
 
-        return $items;
+		return $items;
 	}
 
-
 	/**
-	* Initialisierung des Dashboard-Chart
-	*
-	* @since   1.9
-	* @change  2.5.6
-	*/
-	public static function add_dashboard_chart()
-	{
-		/* Filter */
+	 * Initialize the dashboard chart
+	 *
+	 * @since  1.9
+	 * @since  2.5.6
+	 */
+	public static function add_dashboard_chart() {
 		if ( ! current_user_can( 'publish_posts' ) || ! self::get_option( 'dashboard_chart' ) ) {
 			return;
 		}
 
-		/* Widget hinzufügen */
 		wp_add_dashboard_widget(
 			'ab_widget',
 			'Antispam Bee',
 			array(
 				__CLASS__,
-				'show_spam_chart'
+				'show_spam_chart',
 			)
 		);
 
-		/* CSS laden */
 		add_action(
 			'admin_head',
 			array(
 				__CLASS__,
-				'add_dashboard_style'
+				'add_dashboard_style',
 			)
 		);
 	}
 
-
 	/**
-	* Print dashboard styles
-	*
-	* @since   1.9.0
-	* @change  2.5.8
-	*/
+	 * Print dashboard styles
+	 *
+	 * @since  1.9.0
+	 * @since  2.5.8
+	 */
+	public static function add_dashboard_style() {
+		$plugin = get_plugin_data( __FILE__ );
 
-	public static function add_dashboard_style()
-	{
-		/* Get plugin data */
-		$plugin = get_plugin_data(__FILE__);
-
-		/* Register styles */
 		wp_register_style(
 			'ab_chart',
-			plugins_url('css/dashboard.min.css', __FILE__),
+			plugins_url( 'css/dashboard.min.css', __FILE__ ),
 			array(),
 			$plugin['Version']
 		);
 
-		/* Embed styles */
-  		wp_print_styles('ab_chart');
+		wp_print_styles( 'ab_chart' );
 	}
 
 
 	/**
-	* Print dashboard scripts
-	*
-	* @since   1.9.0
-	* @change  2.5.8
-	*/
+	 * Print dashboard scripts
+	 *
+	 * @since  1.9.0
+	 * @since  2.5.8
+	 */
 	public static function add_dashboard_script() {
-		/* Get stats */
-		if ( ! self::get_option('daily_stats') ) {
+		if ( ! self::get_option( 'daily_stats' ) ) {
 			return;
 		}
 
-		/* Get plugin data */
-		$plugin = get_plugin_data(__FILE__);
+		$plugin = get_plugin_data( __FILE__ );
 
-		/* Embed scripts */
 		wp_enqueue_script(
 			'raphael',
 			plugins_url( 'js/raphael.min.js', __FILE__ ),
@@ -794,85 +859,72 @@ class Antispam_Bee {
 		);
 	}
 
-
 	/**
-	* Print dashboard html
-	*
-	* @since   1.9.0
-	* @change  2.5.8
-	*/
+	 * Print dashboard html
+	 *
+	 * @since  1.9.0
+	 * @since  2.5.8
+	 */
+	public static function show_spam_chart() {
+		$items = (array) self::get_option( 'daily_stats' );
 
-	public static function show_spam_chart()
-	{
-		/* Get stats */
-		$items = (array)self::get_option('daily_stats');
-
-		/* Emty array? */
-		if ( empty($items) ) {
+		if ( empty( $items ) ) {
 			echo sprintf(
 				'<div id="ab_chart"><p>%s</p></div>',
-				esc_html__('No data available.', 'antispam-bee')
+				esc_html__( 'No data available.', 'antispam-bee' )
 			);
 
 			return;
 		}
 
-		// Enqueue scripts.
 		self::add_dashboard_script();
 
-		/* Sort stats */
-		ksort($items, SORT_NUMERIC);
+		ksort( $items, SORT_NUMERIC );
 
-		/* HTML start */
 		$html = "<table id=ab_chart_data>\n";
 
-
-		/* Timestamp table */
 		$html .= "<tfoot><tr>\n";
-		foreach($items as $date => $count) {
-			$html .= "<th>" .$date. "</th>\n";
+		foreach ( $items as $date => $count ) {
+			$html .= '<th>' . date_i18n( 'j. F Y', $date ) . "</th>\n";
 		}
 		$html .= "</tr></tfoot>\n";
 
-		/* Counter table */
 		$html .= "<tbody><tr>\n";
-		foreach($items as $date => $count) {
-			$html .= "<td>" .(int) $count. "</td>\n";
+		foreach ( $items as $date => $count ) {
+			$html .= '<td>' . (int) $count . "</td>\n";
 		}
 		$html .= "</tr></tbody>\n";
 
-
-		/* HTML end */
 		$html .= "</table>\n";
 
-		/* Print html */
-		echo '<div id="ab_chart">' .$html. '</div>';
+		echo wp_kses_post( '<div id="ab_chart">' . $html . '</div>' );
 	}
 
-
-
-
-	############################
-	########  OPTIONS  #########
-	############################
-
-
-	/**
-	* Get all plugin options
-	*
-	* @since   2.4
-	* @change  2.6.1
-	*
-	* @return  array  $options  Array with option fields
+	/*
+	*   ############################
+	*   ########  OPTIONS  #########
+	*   ############################
 	*/
 
-	public static function get_options()
-	{
-		if ( ! $options = wp_cache_get('antispam_bee') ) {
+	/**
+	 * Get all plugin options
+	 *
+	 * @since  2.4
+	 * @since  2.6.1
+	 *
+	 * @return  array $options Array with option fields.
+	 */
+	public static function get_options() {
+		$options = wp_cache_get( 'antispam_bee' );
+		if ( ! $options ) {
 			wp_cache_set(
 				'antispam_bee',
-				$options = get_option('antispam_bee')
+				$options = get_option( 'antispam_bee' )
 			);
+		}
+
+		if ( null === self::$defaults ) {
+			self::_init_internal_vars();
 		}
 
 		return wp_parse_args(
@@ -881,62 +933,52 @@ class Antispam_Bee {
 		);
 	}
 
-
 	/**
-	* Get single option field
-	*
-	* @since   0.1
-	* @change  2.4.2
-	*
-	* @param   string  $field  Field name
-	* @return  mixed           Field value
-	*/
-
-	public static function get_option($field)
-	{
-		/* Get all options */
+	 * Get single option field
+	 *
+	 * @since  0.1
+	 * @since  2.4.2
+	 *
+	 * @param   string $field Field name.
+	 * @return  mixed         Field value.
+	 */
+	public static function get_option( $field ) {
 		$options = self::get_options();
 
-		return self::get_key($options, $field);
+		return self::get_key( $options, $field );
 	}
 
 
 	/**
-	* Update single option field
-	*
-	* @since   0.1
-	* @change  2.4
-	*
-	* @param   string  $field  Field name
-	* @param   mixed           Field value
-	*/
-
-	private static function _update_option($field, $value)
-	{
+	 * Update single option field
+	 *
+	 * @since  0.1
+	 * @since  2.4
+	 *
+	 * @param   string $field Field name.
+	 * @param   mixed  $value The Field value.
+	 */
+	private static function _update_option( $field, $value ) {
 		self::update_options(
 			array(
-				$field => $value
+				$field => $value,
 			)
 		);
 	}
 
 
 	/**
-	* Update multiple option fields
-	*
-	* @since   0.1
-	* @change  2.6.1
-	*
-	* @param   array  $data  Array with plugin option fields
-	*/
+	 * Update multiple option fields
+	 *
+	 * @since  0.1
+	 * @since  2.6.1
+	 *
+	 * @param   array $data Array with plugin option fields.
+	 */
+	public static function update_options( $data ) {
+		$options = get_option( 'antispam_bee' );
 
-	public static function update_options($data)
-	{
-		/* Get options */
-		$options = get_option('antispam_bee');
-
-		/* Merge new data */
-		if ( is_array($options) ) {
+		if ( is_array( $options ) ) {
 			$options = array_merge(
 				$options,
 				$data
@@ -945,13 +987,11 @@ class Antispam_Bee {
 			$options = $data;
 		}
 
-		/* Update options */
 		update_option(
 			'antispam_bee',
 			$options
 		);
 
-		/* Refresh cache */
 		wp_cache_set(
 			'antispam_bee',
 			$options
@@ -960,80 +1000,66 @@ class Antispam_Bee {
 
 
 
-
-	############################
-	########  CRONJOBS  ########
-	############################
-
-
-	/**
-	* Ausführung des täglichen Cronjobs
-	*
-	* @since   0.1
-	* @change  2.4
+	/*
+	*   ############################
+	*   ########  CRONJOBS  ########
+	*   ############################
 	*/
 
-	public static function start_daily_cronjob()
-	{
-		/* Kein Cronjob? */
-		if ( !self::get_option('cronjob_enable') ) {
+	/**
+	 * Execution of the daily cronjobs
+	 *
+	 * @since  0.1
+	 * @since  2.4
+	 */
+	public static function start_daily_cronjob() {
+		if ( ! self::get_option( 'cronjob_enable' ) ) {
 			return;
 		}
 
-		/* Timestamp updaten */
 		self::_update_option(
 			'cronjob_timestamp',
 			time()
 		);
 
-		/* Spam löschen */
 		self::_delete_old_spam();
 	}
 
 
 	/**
-	* Löschung alter Spamkommentare
-	*
-	* @since   0.1
-	* @change  2.4
-	*/
+	 * Delete old spam comments
+	 *
+	 * @since  0.1
+	 * @since  2.4
+	 */
+	private static function _delete_old_spam() {
+		$days = (int) self::get_option( 'cronjob_interval' );
 
-	private static function _delete_old_spam()
-	{
-		/* Anzahl der Tage */
-		$days = (int)self::get_option('cronjob_interval');
-
-		/* Kein Wert? */
-		if ( empty($days) ) {
+		if ( empty( $days ) ) {
 			return false;
 		}
 
-		/* Global */
 		global $wpdb;
 
-		/* Kommentare löschen */
 		$wpdb->query(
 			$wpdb->prepare(
-				"DELETE FROM `$wpdb->comments` WHERE `comment_approved` = 'spam' AND SUBDATE(NOW(), %d) > comment_date_gmt",
+				"DELETE c, cm FROM `$wpdb->comments` AS c LEFT JOIN `$wpdb->commentmeta` AS cm ON (c.comment_ID = cm.comment_id) WHERE c.comment_approved = 'spam' AND SUBDATE(NOW(), %d) > c.comment_date_gmt",
 				$days
 			)
 		);
 
-		/* DB optimieren */
-		$wpdb->query("OPTIMIZE TABLE `$wpdb->comments`");
+		$wpdb->query( "OPTIMIZE TABLE `$wpdb->comments`" );
 	}
 
 
 	/**
-	* Initialisierung des Cronjobs
-	*
-	* @since   0.1
-	* @change  2.4
-	*/
-
-	public static function init_scheduled_hook()
-	{
-		if ( ! wp_next_scheduled('antispam_bee_daily_cronjob') ) {
+	 * Initialization of the cronjobs
+	 *
+	 * @since  0.1
+	 * @since  2.4
+	 */
+	public static function init_scheduled_hook() {
+		if ( ! wp_next_scheduled( 'antispam_bee_daily_cronjob' ) ) {
 			wp_schedule_event(
 				time(),
 				'daily',
@@ -1044,127 +1070,126 @@ class Antispam_Bee {
 
 
 	/**
-	* Löschung des Cronjobs
-	*
-	* @since   0.1
-	* @change  2.4
-	*/
+	 * Deletion of the cronjobs
+	 *
+	 * @since  0.1
+	 * @since  2.4
+	 */
+	public static function clear_scheduled_hook() {
+		if ( wp_next_scheduled( 'antispam_bee_daily_cronjob' ) ) {
+			wp_clear_scheduled_hook( 'antispam_bee_daily_cronjob' );
+		}
+	}
 
-	public static function clear_scheduled_hook()
-	{
-		if ( wp_next_scheduled('antispam_bee_daily_cronjob') ) {
-			wp_clear_scheduled_hook('antispam_bee_daily_cronjob');
+	/**
+	 * Shows plugin update notice
+	 *
+	 * @since  2.11.4
+	 *
+	 * @param array $data An array of plugin metadata. See get_plugin_data()
+	 *                    and the {@see 'plugin_row_meta'} filter for the list
+	 *                    of possible values.
+	 *
+	 * @return void
+	 */
+	public static function upgrade_notice( $data ) {
+		if ( isset( $data['upgrade_notice'] ) ) {
+			printf(
+				'<div class="update-message">%s</div>',
+				wp_kses(
+					wpautop( $data['upgrade_notice '] ),
+					array(
+						'p'     => array(),
+						'a'     => array( 'href', 'title' ),
+						'strong' => array(),
+						'em' => array(),
+					)
+				)
+			);
 		}
 	}
 
 
-
-
-	############################
-	######  SPAMPRÜFUNG  #######
-	############################
-
-
-	/**
-	* Überprüfung der POST-Werte
-	*
-	* @since   0.1
-	* @change  2.6.3
+	/*
+	*   ############################
+	*   ######  SPAM CHECK  ########
+	*   ############################
 	*/
 
-	public static function precheck_incoming_request()
-	{
-		/* Skip if not a comment request */
-		if ( is_feed() OR is_trackback() OR empty($_POST) OR self::_is_mobile() ) {
+	/**
+	 * Check POST values
+	 *
+	 * @since  0.1
+	 * @since  2.6.3
+	 */
+	public static function precheck_incoming_request() {
+		// phpcs:disable WordPress.Security.NonceVerification.Missing
+		if ( is_feed() || is_trackback() || empty( $_POST ) || self::_is_mobile() ) {
 			return;
 		}
 
-		/* Request params */
-		$request_uri = self::get_key($_SERVER, 'REQUEST_URI');
-		$request_path = parse_url($request_uri, PHP_URL_PATH);
+		$request_uri  = self::get_key( $_SERVER, 'REQUEST_URI' );
+		$request_path = self::parse_url( $request_uri, 'path' );
 
-		/* Request check */
-		if ( strpos($request_path, 'wp-comments-post.php') === false ) {
+		if ( strpos( $request_path, 'wp-comments-post.php' ) === false ) {
 			return;
 		}
 
-		/* Form fields */
-		$hidden_field = self::get_key($_POST, 'comment');
-		$plugin_field = self::get_key($_POST, self::$_secret);
+		$post_id      = (int) self::get_key( $_POST, 'comment_post_ID' );
+		$hidden_field = self::get_key( $_POST, 'comment' );
+		$plugin_field = self::get_key( $_POST, self::get_secret_name_for_post( $post_id ) );
 
-		/* Hidden field check */
-		if ( empty($hidden_field) && ! empty($plugin_field) ) {
-			$_POST['comment'] = $plugin_field;
-			unset( $_POST[self::$_secret] );
-		} else {
+		if ( ! empty( $hidden_field ) ) {
 			$_POST['ab_spam__hidden_field'] = 1;
+		} else {
+			$_POST['comment'] = $plugin_field;
+			unset( $_POST[ self::get_secret_name_for_post( $post_id ) ] );
 		}
+		// phpcs:enable WordPress.Security.NonceVerification.Missing
 	}
 
 
 	/**
-	* Prüfung der eingehenden Anfragen auf Spam
-	*
-	* @since   0.1
-	* @change  2.6.3
-	*
-	* @param   array  $comment  Unbehandelter Kommentar
-	* @return  array  $comment  Behandelter Kommentar
-	*/
-
-	public static function handle_incoming_request($comment)
-	{
-		/* Add client IP */
+	 * Check incoming requests for spam
+	 *
+	 * @since  0.1
+	 * @since  2.6.3
+	 * @since  2.10.0 Refactoring of code if pings are allowed and if is ping
+	 *
+	 * @param   array $comment  Untreated comment.
+	 * @return  array $comment  Treated comment.
+	 */
+	public static function handle_incoming_request( $comment ) {
 		$comment['comment_author_IP'] = self::get_client_ip();
 
-		/* Hook client IP */
-		add_filter(
-			'pre_comment_user_ip',
-			array(
-				__CLASS__,
-				'get_client_ip'
-			),
-			1
-		);
+		$request_uri  = self::get_key( $_SERVER, 'REQUEST_URI' );
+		$request_path = self::parse_url( $request_uri, 'path' );
 
-		/* Request params */
-		$request_uri = self::get_key($_SERVER, 'REQUEST_URI');
-		$request_path = parse_url($request_uri, PHP_URL_PATH);
-
-		/* Empty path? */
-		if ( empty($request_path) ) {
+		if ( empty( $request_path ) ) {
 			return self::_handle_spam_request(
 				$comment,
 				'empty'
 			);
 		}
 
-		/* Defaults */
-		$ping = array(
-			'types'   => array('pingback', 'trackback', 'pings'),
-			'allowed' => !self::get_option('ignore_pings')
-		);
+		$pings_allowed = ! self::get_option( 'ignore_pings' );
 
-		/* Is a comment */
-		if ( strpos($request_path, 'wp-comments-post.php') !== false && ! empty($_POST) ) {
-			/* Verify request */
-			$status = self::_verify_comment_request($comment);
+		// phpcs:disable WordPress.Security.NonceVerification.Missing
+		// Everybody can post.
+		if ( strpos( $request_path, 'wp-comments-post.php' ) !== false && ! empty( $_POST ) ) {
+			// phpcs:enable WordPress.Security.NonceVerification.Missing
+			$status = self::_verify_comment_request( $comment );
 
-			/* Treat the request as spam */
-			if ( ! empty($status['reason']) ) {
+			if ( ! empty( $status['reason'] ) ) {
 				return self::_handle_spam_request(
 					$comment,
 					$status['reason']
 				);
 			}
+		} elseif ( self::is_ping( $comment ) && $pings_allowed ) {
+			$status = self::_verify_trackback_request( $comment );
 
-		/* Is a trackback */
-		} else if ( in_array(self::get_key($comment, 'comment_type'), $ping['types']) && $ping['allowed'] ) {
-			/* Verify request */
-			$status = self::_verify_trackback_request($comment);
-
-			/* Treat the request as spam */
-			if ( ! empty($status['reason']) ) {
+			if ( ! empty( $status['reason'] ) ) {
 				return self::_handle_spam_request(
 					$comment,
 					$status['reason'],
@@ -1176,60 +1201,83 @@ class Antispam_Bee {
 		return $comment;
 	}
 
-
 	/**
-	* Bereitet die Ersetzung des KOmmentarfeldes vor
-	*
-	* @since   0.1
-	* @change  2.4
-	*/
-
-	public static function prepare_comment_field()
-	{
-		/* Nur Frontend */
-		if ( is_feed() or is_trackback() or is_robots() or self::_is_mobile() ) {
+	 * Prepares the replacement of the comment field with output buffering.
+	 *
+	 * @since 2.10.0
+	 */
+	public static function prepare_comment_field_output_buffering() {
+		if ( is_feed() || is_trackback() || is_robots() || self::_is_mobile() ) {
 			return;
 		}
 
-		/* Nur Beiträge */
-		if ( !is_singular() && !self::get_option('always_allowed') ) {
-			return;
-		}
-
-		/* Fire! */
 		ob_start(
 			array(
 				'Antispam_Bee',
-				'replace_comment_field'
+				'prepare_comment_field',
 			)
 		);
 	}
 
 
 	/**
-	* ersetzt das Kommentarfeld
-	*
-	* @since   2.4
-	* @change  2.6.4
-	*
-	* @param   string  $data  HTML-Code der Webseite
-	* @return  string         Behandelter HTML-Code
-	*/
-
-	public static function replace_comment_field($data)
-	{
-		/* Leer? */
-		if ( empty($data) ) {
-			return;
-		}
-
-		/* Find the comment textarea */
-		if ( ! preg_match('#<textarea.+?name=["\']comment["\']#s', $data) ) {
+	 * Prepares the replacement of the comment field
+	 *
+	 * @since  0.1
+	 * @since  2.4
+	 * @since  2.10.0 Changes needed because of new way to add the honeypot field via filter instead of output buffering
+	 *
+	 * @param string $data Markup of the comment field or whole page (depending on ob option).
+	 */
+	public static function prepare_comment_field( $data ) {
+		if ( empty( $data ) ) {
 			return $data;
 		}
 
-		/* Build init time field */
-		if ( self::get_option('time_check') ) {
+		if ( ! preg_match( '#<textarea.+?name=["\']comment["\']#s', $data ) ) {
+			return $data;
+		}
+
+		return preg_replace_callback(
+			'/(?P<all>                                                              (?# match the whole textarea tag )
+				<textarea                                                           (?# the opening of the textarea and some optional attributes )
+				(                                                                   (?# match a id attribute followed by some optional ones and the name attribute )
+					(?P<before1>[^>]*)
+					(?P<id1>id=["\'](?P<id_value1>[^>"\']*)["\'])
+					(?P<between1>[^>]*)
+					name=["\']comment["\']
+					|                                                               (?# match same as before, but with the name attribute before the id attribute )
+					(?P<before2>[^>]*)
+					name=["\']comment["\']
+					(?P<between2>[^>]*)
+					(?P<id2>id=["\'](?P<id_value2>[^>"\']*)["\'])
+					|                                                               (?# match same as before, but with no id attribute )
+					(?P<before3>[^>]*)
+					name=["\']comment["\']
+					(?P<between3>[^>]*)
+				)
+				(?P<after>[^>]*)                                                    (?# match any additional optional attributes )
+				>                                                                   (?# the closing of the textarea opening tag )
+				(?s)(?P<content>.*?)                                                (?# any textarea content )
+				<\/textarea>                                                        (?# the closing textarea tag )
+			)/x',
+			array( 'Antispam_Bee', 'replace_comment_field_callback' ),
+			$data,
+			-1
+		);
+	}
+
+	/**
+	 * The callback function for the preg_match_callback to modify the textarea tags.
+	 *
+	 * @since   2.6.10
+	 *
+	 * @param array $matches The regex matches.
+	 *
+	 * @return string The modified content string.
+	 */
+	public static function replace_comment_field_callback( $matches ) {
+		if ( self::get_option( 'time_check' ) ) {
 			$init_time_field = sprintf(
 				'<input type="hidden" name="ab_init_time" value="%d" />',
 				time()
@@ -1238,244 +1286,278 @@ class Antispam_Bee {
 			$init_time_field = '';
 		}
 
-		/* Inject HTML */
-		return preg_replace(
-			'#<textarea(.+?)name=["\']comment["\'](.+?)</textarea>#s',
-            sprintf(
-                '<textarea$1name="%s"$2</textarea><textarea name="comment" style="display:none" rows="1" cols="1"></textarea>%s',
-                self::$_secret,
-                $init_time_field
-            ),
-			$data,
-			1
-		);
+		$output = '<textarea autocomplete="new-password" ' . $matches['before1'] . $matches['before2'] . $matches['before3'];
+
+		$id_script = '';
+		if ( ! empty( $matches['id1'] ) || ! empty( $matches['id2'] ) ) {
+			$output .= 'id="' . self::get_secret_id_for_post( self::$_current_post_id ) . '" ';
+			if ( ! self::_is_amp() ) {
+				$id_script = '<script data-noptimize>' .
+							'document.getElementById("comment").setAttribute( "id", "a' . substr( esc_js( md5( time() ) ), 0, 31 ) . '" );' .
+							'document.getElementById("' . esc_js( self::get_secret_id_for_post( self::$_current_post_id ) ) . '").setAttribute( "id", "comment" );' .
+							'</script>';
+			}
+		}
+
+		$output .= ' name="' . esc_attr( self::get_secret_name_for_post( self::$_current_post_id ) ) . '" ';
+		$output .= $matches['between1'] . $matches['between2'] . $matches['between3'];
+		$output .= $matches['after'] . '>';
+		$output .= $matches['content'];
+		$output .= '</textarea><textarea id="comment" aria-label="hp-comment" aria-hidden="true" name="comment" autocomplete="new-password" style="padding:0 !important;clip:rect(1px, 1px, 1px, 1px) !important;position:absolute !important;white-space:nowrap !important;height:1px !important;width:1px !important;overflow:hidden !important;" tabindex="-1"></textarea>';
+
+		$output .= $id_script;
+		$output .= $init_time_field;
+
+		return $output;
 	}
 
 
 	/**
-	* Prüfung der Trackbacks
-	*
-	* @since   2.4
-	* @change  2.6.6
-	*
-	* @param   array  $comment  Daten des Trackbacks
-	* @return  array            Array mit dem Verdachtsgrund [optional]
-	*/
+	 * Check the trackbacks
+	 *
+	 * @since  2.4
+	 * @since  2.7.0
+	 *
+	 * @param   array $comment Trackback data.
+	 * @return  array          Array with suspected reason.
+	 */
+	private static function _verify_trackback_request( $comment ) {
+		$ip        = self::get_key( $comment, 'comment_author_IP' );
+		$url       = self::get_key( $comment, 'comment_author_url' );
+		$body      = self::get_key( $comment, 'comment_content' );
+		$post_id   = self::get_key( $comment, 'comment_post_ID' );
+		$type      = self::get_key( $comment, 'comment_type' );
+		$blog_name = self::get_key( $comment, 'comment_author' );
 
-	private static function _verify_trackback_request($comment)
-	{
-		/* Kommentarwerte */
-		$ip = self::get_key($comment, 'comment_author_IP');
-		$url = self::get_key($comment, 'comment_author_url');
-		$body = self::get_key($comment, 'comment_content');
-
-		/* Leere Werte ? */
-		if ( empty($url) OR empty($body) ) {
+		if ( empty( $url ) || empty( $body ) ) {
 			return array(
-				'reason' => 'empty'
+				'reason' => 'empty',
 			);
 		}
 
-		/* IP? */
-		if ( empty($ip) ) {
+		if ( empty( $ip ) ) {
 			return array(
-				'reason' => 'empty'
+				'reason' => 'empty',
 			);
 		}
 
-		/* Optionen */
-		$options = self::get_options();
-
-		/* BBCode Spam */
-		if ( $options['bbcode_check'] && self::_is_bbcode_spam($body) ) {
-			return array(
-				'reason' => 'bbcode'
-			);
-		}
-
-		/* IP != Server */
-		if ( $options['advanced_check'] && self::_is_fake_ip($ip, parse_url($url, PHP_URL_HOST)) ) {
-			return array(
-				'reason' => 'server'
-			);
-		}
-
-		/* IP im lokalen Spam */
-		if ( $options['spam_ip'] && self::_is_db_spam($ip, $url) ) {
-			return array(
-				'reason' => 'localdb'
-			);
-		}
-
-		/* DNSBL Spam */
-		if ( $options['dnsbl_check'] && self::_is_dnsbl_spam($ip) ) {
-			return array(
-				'reason' => 'dnsbl'
-			);
-		}
-	}
-
-
-	/**
-	* Prüfung den Kommentar
-	*
-	* @since   2.4
-	* @change  2.6.5
-	*
-	* @param   array  $comment  Daten des Kommentars
-	* @return  array            Array mit dem Verdachtsgrund [optional]
-	*/
-
-	private static function _verify_comment_request($comment)
-	{
-		/* Kommentarwerte */
-		$ip = self::get_key($comment, 'comment_author_IP');
-		$url = self::get_key($comment, 'comment_author_url');
-		$body = self::get_key($comment, 'comment_content');
-		$email = self::get_key($comment, 'comment_author_email');
-		$author = self::get_key($comment, 'comment_author');
-
-		/* Leere Werte ? */
-		if ( empty($body) ) {
-			return array(
-				'reason' => 'empty'
-			);
-		}
-
-		/* IP? */
-		if ( empty($ip) ) {
-			return array(
-				'reason' => 'empty'
-			);
-		}
-
-		/* Leere Werte ? */
-		if ( get_option('require_name_email') && ( empty($email) OR empty($author) ) ) {
-			return array(
-				'reason' => 'empty'
-			);
-		}
-
-		/* Optionen */
-		$options = self::get_options();
-
-		/* Bereits kommentiert? */
-		if ( $options['already_commented'] && ! empty($email) && self::_is_approved_email($email) ) {
+		if ( 'pingback' === $type && self::_pingback_from_myself( $url, $post_id ) ) {
 			return;
 		}
 
-		/* Check for a Gravatar */
-		if ( $options['gravatar_check'] && ! empty($email) && self::_has_valid_gravatar($email) ) {
-		    return;
-		}
-
-		/* Bot erkannt */
-		if ( ! empty($_POST['ab_spam__hidden_field']) ) {
+		if ( self::is_trackback_post_title_blog_name_spam( $body, $blog_name ) ) {
 			return array(
-				'reason' => 'css'
+				'reason' => 'title_is_name',
 			);
 		}
 
-		/* Action time */
-		if ( $options['time_check'] && self::_is_shortest_time() ) {
+		$options = self::get_options();
+
+		if ( $options['bbcode_check'] && self::_is_bbcode_spam( $body ) ) {
 			return array(
-				'reason' => 'time'
+				'reason' => 'bbcode',
 			);
 		}
 
-		/* BBCode Spam */
-		if ( $options['bbcode_check'] && self::_is_bbcode_spam($body) ) {
+		if ( $options['spam_ip'] && self::_is_db_spam( $ip, $url ) ) {
 			return array(
-				'reason' => 'bbcode'
+				'reason' => 'localdb',
 			);
 		}
 
-		/* Erweiterter Schutz */
-		if ( $options['advanced_check'] && self::_is_fake_ip($ip) ) {
+		if ( $options['country_code'] && self::_is_country_spam( $ip ) ) {
 			return array(
-				'reason' => 'server'
+				'reason' => 'country',
 			);
 		}
 
-		/* Regexp für Spam */
+		if ( $options['translate_api'] && self::_is_lang_spam( $body ) ) {
+			return array(
+				'reason' => 'lang',
+			);
+		}
+
 		if ( $options['regexp_check'] && self::_is_regexp_spam(
 			array(
-				'ip'	 => $ip,
-				'host'	 => parse_url($url, PHP_URL_HOST),
-				'body'	 => $body,
-				'email'	 => $email,
-				'author' => $author
+				'ip'     => $ip,
+				'rawurl' => $url,
+				'host'   => self::parse_url( $url, 'host' ),
+				'body'   => $body,
+				'email'  => '',
+				'author' => '',
 			)
 		) ) {
 			return array(
-				'reason' => 'regexp'
+				'reason' => 'regexp',
+			);
+		}
+	}
+
+	/**
+	 * Check, if I pinged myself.
+	 *
+	 * @since 2.8.2
+	 *
+	 * @param string $url            The URL from where the ping came.
+	 * @param int    $target_post_id The post ID which has been pinged.
+	 *
+	 * @return bool
+	 */
+	private static function _pingback_from_myself( $url, $target_post_id ) {
+
+		if ( 0 !== strpos( $url, home_url() ) ) {
+			return false;
+		}
+
+		$original_post_id = (int) url_to_postid( $url );
+		if ( ! $original_post_id ) {
+			return false;
+		}
+
+		$post = get_post( $original_post_id );
+		if ( ! $post ) {
+			return false;
+		}
+
+		$urls        = wp_extract_urls( $post->post_content );
+		$url_to_find = get_permalink( $target_post_id );
+		if ( ! $url_to_find ) {
+			return false;
+		}
+		foreach ( $urls as $url ) {
+			if ( strpos( $url, $url_to_find ) === 0 ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Check the comment
+	 *
+	 * @since  2.4
+	 * @since  2.7.0
+	 * @since  2.10.0 Add useragent as data to regex check
+	 *
+	 * @param   array $comment Data of the comment.
+	 * @return  array|void     Array with suspected reason
+	 */
+	private static function _verify_comment_request( $comment ) {
+		$ip        = self::get_key( $comment, 'comment_author_IP' );
+		$url       = self::get_key( $comment, 'comment_author_url' );
+		$body      = self::get_key( $comment, 'comment_content' );
+		$email     = self::get_key( $comment, 'comment_author_email' );
+		$author    = self::get_key( $comment, 'comment_author' );
+		$useragent = self::get_key( $comment, 'comment_agent' );
+
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+		$allow_empty_comment = apply_filters( 'allow_empty_comment', false, $comment );
+
+		if ( empty( $body ) && ! $allow_empty_comment ) {
+			return array(
+				'reason' => 'empty',
 			);
 		}
 
-		/* IP im lokalen Spam */
-		if ( $options['spam_ip'] && self::_is_db_spam($ip, $url, $email) ) {
+		if ( empty( $ip ) ) {
 			return array(
-				'reason' => 'localdb'
+				'reason' => 'empty',
 			);
 		}
 
-		/* DNSBL Spam */
-		if ( $options['dnsbl_check'] && self::_is_dnsbl_spam($ip) ) {
+		if ( get_option( 'require_name_email' ) && ( empty( $email ) || empty( $author ) ) ) {
 			return array(
-				'reason' => 'dnsbl'
+				'reason' => 'empty',
+			);
+		}
+
+		$options = self::get_options();
+
+		if ( $options['already_commented'] && ! empty( $email ) && self::_is_approved_email( $email ) ) {
+			return;
+		}
+
+		if ( $options['gravatar_check'] && ! empty( $email ) && 1 === (int) get_option( 'show_avatars', 0 ) && self::_has_valid_gravatar( $email ) ) {
+			return;
+		}
+
+		// phpcs:disable WordPress.Security.NonceVerification.Missing
+		if ( ! empty( $_POST['ab_spam__hidden_field'] ) ) {
+			return array(
+				'reason' => 'css',
+			);
+		}
+		// phpcs:enable WordPress.Security.NonceVerification.Missing
+
+		if ( $options['time_check'] && self::_is_shortest_time() ) {
+			return array(
+				'reason' => 'time',
+			);
+		}
+
+		if ( $options['bbcode_check'] && self::_is_bbcode_spam( $body ) ) {
+			return array(
+				'reason' => 'bbcode',
+			);
+		}
+
+		if ( $options['regexp_check'] && self::_is_regexp_spam(
+			array(
+				'ip'        => $ip,
+				'rawurl'    => $url,
+				'host'      => self::parse_url( $url, 'host' ),
+				'body'      => $body,
+				'email'     => $email,
+				'author'    => $author,
+				'useragent' => $useragent,
+			)
+		) ) {
+			return array(
+				'reason' => 'regexp',
+			);
+		}
+
+		if ( $options['spam_ip'] && self::_is_db_spam( $ip, $url, $email ) ) {
+			return array(
+				'reason' => 'localdb',
+			);
+		}
+
+		if ( $options['country_code'] && self::_is_country_spam( $ip ) ) {
+			return array(
+				'reason' => 'country',
+			);
+		}
+
+		if ( $options['translate_api'] && self::_is_lang_spam( $body ) ) {
+			return array(
+				'reason' => 'lang',
 			);
 		}
 	}
 
 
 	/**
-	* Check for a Gravatar image
-	*
-	* @since   2.6.5
-	* @change  2.6.5
-	*
-	* @param   string	$email  Input email
-	* @return  boolean       	Check status (true = Gravatar available)
-	*/
+	 * Check for a Gravatar image
+	 *
+	 * @since  2.6.5
+	 *
+	 * @param   string $email Input email.
+	 * @return  boolean       Check status (true = Gravatar available).
+	 */
+	private static function _has_valid_gravatar( $email ) {
+		$response = wp_safe_remote_get(
+			sprintf(
+				'https://www.gravatar.com/avatar/%s?d=404',
+				md5( strtolower( trim( $email ) ) )
+			)
+		);
 
-    private static function _has_valid_gravatar($email) {
-        $response = wp_safe_remote_get(
-            sprintf(
-                'https://www.gravatar.com/avatar/%s?d=404',
-                md5( strtolower( trim($email) ) )
-            )
-        );
-
-        if ( is_wp_error($response) ) {
-            return null;
-        }
-
-        if ( wp_remote_retrieve_response_code($response) === 200 ) {
-            return true;
-        }
-
-        return false;
-    }
-
-
-	/**
-	* Check for comment action time
-	*
-	* @since   2.6.4
-	* @change  2.6.4
-	*
-	* @return  boolean    TRUE if the action time is less than 5 seconds
-	*/
-
-	private static function _is_shortest_time()
-	{
-		/* Comment init time */
-		if ( ! $init_time = (int)self::get_key($_POST, 'ab_init_time') ) {
-			return false;
+		if ( is_wp_error( $response ) ) {
+			return null;
 		}
 
-		/* Compare time values */
-		if ( time() - $init_time < apply_filters('ab_action_time_limit', 5) ) {
+		if ( wp_remote_retrieve_response_code( $response ) === 200 ) {
 			return true;
 		}
 
@@ -1484,99 +1566,152 @@ class Antispam_Bee {
 
 
 	/**
-	* Anwendung von Regexp, auch benutzerdefiniert
-	*
-	* @since   2.5.2
-	* @change  2.5.6
-	*
-	* @param   array	$comment  Array mit Kommentardaten
-	* @return  boolean       	  TRUE bei verdächtigem Kommentar
-	*/
+	 * Check for comment action time
+	 *
+	 * @since   2.6.4
+	 *
+	 * @return  boolean    TRUE if the action time is less than 5 seconds
+	 */
+	private static function _is_shortest_time() {
+		// phpcs:disable WordPress.Security.NonceVerification.Missing
+		// Everybody can Post.
+		$init_time = (int) self::get_key( $_POST, 'ab_init_time' );
+		// phpcs:enable WordPress.Security.NonceVerification.Missing
+		if ( 0 === $init_time ) {
+			return false;
+		}
 
-	private static function _is_regexp_spam($comment)
-	{
-		/* Felder */
+		if ( time() - $init_time < apply_filters( 'ab_action_time_limit', 5 ) ) {
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check if the blog name and the title of the blog post from which the trackback originates are equal.
+	 *
+	 * @since   2.6.4
+	 *
+	 * @param string $body      The comment body.
+	 * @param string $blog_name The name of the blog.
+	 *
+	 * @return bool
+	 */
+	private static function is_trackback_post_title_blog_name_spam( $body, $blog_name ) {
+		preg_match( '/<strong>(.*)<\/strong>\\n\\n/', $body, $matches );
+		if ( ! isset( $matches[1] ) ) {
+			return false;
+		}
+		return trim( $matches[1] ) === trim( $blog_name );
+	}
+
+
+	/**
+	 * Usage of regexp, also custom
+	 *
+	 * @since  2.5.2
+	 * @since  2.5.6
+	 * @since  2.10.0 Use useragent in check
+	 *
+	 * @param   array $comment Array with commentary data.
+	 * @return  boolean        True for suspicious comment.
+	 */
+	private static function _is_regexp_spam( $comment ) {
 		$fields = array(
 			'ip',
 			'host',
 			'body',
 			'email',
-			'author'
+			'author',
+			'useragent',
 		);
 
-		/* Regexp */
 		$patterns = array(
-			0 => array(
-				'host'	=> '^(www\.)?\d+\w+\.com$',
-				'body'	=> '^\w+\s\d+$',
-				'email'	=> '@gmail.com$'
+			array(
+				'host'  => '^(www\.)?\d+\w+\.com$',
+				'body'  => '^\w+\s\d+$',
+				'email' => '@gmail.com$',
 			),
-			1 => array(
-				'body'	=> '\<\!.+?mfunc.+?\>'
-			)
+			array(
+				'body'   => '\b[a-z]{30}\b',
+				'author' => '\b[a-z]{10}\b',
+				'host'   => '\b[a-z]{10}\b',
+			),
+			array(
+				'body' => '\<\!.+?mfunc.+?\>',
+			),
+			array(
+				'author' => 'moncler|north face|vuitton|handbag|burberry|outlet|prada|cialis|viagra|maillot|oakley|ralph lauren|ray ban|iphone|プラダ',
+			),
+			array(
+				'host' => '^(www\.)?fkbook\.co\.uk$|^(www\.)?nsru\.net$|^(www\.)?goo\.gl$|^(www\.)?bit\.ly$',
+			),
+			array(
+				'body' => 'target[t]?ed (visitors|traffic)|viagra|cialis',
+			),
+			array(
+				'body' => 'purchase amazing|buy amazing|luxurybrandsale',
+			),
+			array(
+				'body'  => 'dating|sex|lotto|pharmacy',
+				'email' => '@mail\.ru|@yandex\.',
+			),
 		);
 
-		/* Spammy author */
-		if ( $quoted_author = preg_quote($comment['author'], '/') ) {
+		$quoted_author = preg_quote( $comment['author'], '/' );
+		if ( $quoted_author ) {
 			$patterns[] = array(
 				'body' => sprintf(
 					'<a.+?>%s<\/a>$',
 					$quoted_author
-				)
+				),
 			);
 			$patterns[] = array(
 				'body' => sprintf(
 					'%s https?:.+?$',
 					$quoted_author
-				)
+				),
 			);
 			$patterns[] = array(
-				'email'	 => '@gmail.com$',
+				'email'  => '@gmail.com$',
 				'author' => '^[a-z0-9-\.]+\.[a-z]{2,6}$',
-				'host'	 => sprintf(
+				'host'   => sprintf(
 					'^%s$',
 					$quoted_author
-				)
+				),
 			);
 		}
 
-		/* Hook */
 		$patterns = apply_filters(
 			'antispam_bee_patterns',
 			$patterns
 		);
 
-		/* Leer? */
 		if ( ! $patterns ) {
 			return false;
 		}
 
-		/* Ausdrücke loopen */
-		foreach ($patterns as $pattern) {
+		foreach ( $patterns as $pattern ) {
 			$hits = array();
 
-			/* Felder loopen */
-			foreach ($pattern as $field => $regexp) {
-				/* Empty value? */
-				if ( empty($field) OR !in_array($field, $fields) OR empty($regexp) ) {
+			foreach ( $pattern as $field => $regexp ) {
+				if ( empty( $field ) || ! in_array( $field, $fields, true ) || empty( $regexp ) ) {
 					continue;
 				}
 
-				/* Ignore non utf-8 chars */
-				$comment[$field] = ( function_exists('iconv') ? iconv('utf-8', 'utf-8//TRANSLIT', $comment[$field]) : $comment[$field] );
+				$comment[ $field ] = ( function_exists( 'iconv' ) ? iconv( 'utf-8', 'utf-8//TRANSLIT', $comment[ $field ] ) : $comment[ $field ] );
 
-				/* Empty value? */
-				if ( empty($comment[$field]) ) {
+				if ( empty( $comment[ $field ] ) ) {
 					continue;
 				}
 
-				/* Perform regex */
-				if ( @preg_match('/' .$regexp. '/isu', $comment[$field]) ) {
-					$hits[$field] = true;
+				if ( preg_match( '/' . $regexp . '/isu', $comment[ $field ] ) ) {
+					$hits[ $field ] = true;
 				}
 			}
 
-			if ( count($hits) === count($pattern) ) {
+			if ( count( $hits ) === count( $pattern ) ) {
 				return true;
 			}
 		}
@@ -1586,137 +1721,194 @@ class Antispam_Bee {
 
 
 	/**
-	* Prüfung eines Kommentars auf seine Existenz im lokalen Spam
-	*
-	* @since   2.0.0
-	* @change  2.5.4
-	*
-	* @param   string	$ip     Kommentar-IP
-	* @param   string	$url    Kommentar-URL [optional]
-	* @param   string	$email  Kommentar-Email [optional]
-	* @return  boolean          TRUE bei verdächtigem Kommentar
-	*/
-
-	private static function _is_db_spam($ip, $url = '', $email = '')
-	{
-		/* Global */
+	 * Review a comment on its existence in the local spam
+	 *
+	 * @since  2.0.0
+	 * @since  2.5.4
+	 *
+	 * @param   string $ip    Comment IP.
+	 * @param   string $url   Comment URL (optional).
+	 * @param   string $email Comment Email (optional).
+	 * @return  boolean       True for suspicious comment.
+	 */
+	private static function _is_db_spam( $ip, $url = '', $email = '' ) {
 		global $wpdb;
 
-		/* Default */
-		$filter = array('`comment_author_IP` = %s');
-		$params = array( wp_unslash($ip) );
-
-		/* URL abgleichen */
-		if ( ! empty($url) ) {
+		$params = array();
+		$filter = array();
+		if ( ! empty( $url ) ) {
 			$filter[] = '`comment_author_url` = %s';
-			$params[] = wp_unslash($url);
+			$params[] = wp_unslash( $url );
+		}
+		if ( ! empty( $ip ) ) {
+			$filter[] = '`comment_author_IP` = %s';
+			$params[] = wp_unslash( $ip );
 		}
 
-		/* E-Mail abgleichen */
-		if ( ! empty($email) ) {
+		if ( ! empty( $email ) ) {
 			$filter[] = '`comment_author_email` = %s';
-			$params[] = wp_unslash($email);
+			$params[] = wp_unslash( $email );
+		}
+		if ( empty( $params ) ) {
+			return false;
 		}
 
-		/* Query ausführen */
+		// phpcs:disable WordPress.DB.PreparedSQL.NotPrepared
+		// phpcs:disable WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber
+		$filter_sql = implode( ' OR ', $filter );
+
 		$result = $wpdb->get_var(
 			$wpdb->prepare(
 				sprintf(
 					"SELECT `comment_ID` FROM `$wpdb->comments` WHERE `comment_approved` = 'spam' AND (%s) LIMIT 1",
-					implode(' OR ', $filter)
+					$filter_sql
 				),
 				$params
 			)
 		);
+		// phpcs:enable WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber
+		// phpcs:enable WordPress.DB.PreparedSQL.NotPrepared
 
-		return !empty($result);
+		return ! empty( $result );
 	}
 
 
 	/**
-	* Prüfung auf DNSBL Spam
-	*
-	* @since   2.4.5
-	* @change  2.4.5
-	*
-	* @param   string   $ip  IP-Adresse
-	* @return  boolean       TRUE bei gemeldeter IP
-	*/
+	 * Check for country spam by (anonymized) IP
+	 *
+	 * @since  2.6.9
+	 * @since  2.10.0 Make country check API filterable and use iplocate.io instead of ip2country.info
+	 *
+	 * @param   string $ip IP address.
+	 * @return  boolean    True if the comment is spam based on country filter.
+	 */
+	private static function _is_country_spam( $ip ) {
+		$options = self::get_options();
 
-	private static function _is_dnsbl_spam($ip)
-	{
-		/* Start request */
-		$response = wp_safe_remote_request(
+		$allowed = preg_split(
+			'/[\s,;]+/',
+			$options['country_allowed'],
+			-1,
+			PREG_SPLIT_NO_EMPTY
+		);
+		$denied = preg_split(
+			'/[\s,;]+/',
+			$options['country_denied'],
+			-1,
+			PREG_SPLIT_NO_EMPTY
+		);
+
+		if ( empty( $allowed ) && empty( $denied ) ) {
+			return false;
+		}
+
+		/**
+		 * Filter to hook into the `_is_country_spam` functionality, to implement for example a custom IP check.
+		 *
+		 * @since 2.10.0
+		 *
+		 * @param null   $is_country_spam The `is_country_spam` result.
+		 * @param string $ip              The IP address.
+		 * @param array  $allowed         The list of allowed country codes.
+		 * @param array  $denied          The list of denied country codes.
+		 *
+		 * @return null|boolean The `is_country_spam` result or null.
+		 */
+		$is_country_spam = apply_filters( 'antispam_bee_is_country_spam', null, $ip, $allowed, $denied );
+
+		if ( is_bool( $is_country_spam ) ) {
+			return $is_country_spam;
+		}
+
+		/**
+		 * Filters the IPLocate API key. With this filter, you can add your own IPLocate API key.
+		 *
+		 * @since 2.10.0
+		 *
+		 * @param string  The current IPLocate API key. Default is `null`.
+		 *
+		 * @return string The changed IPLocate API key or null.
+		 */
+		$apikey = apply_filters( 'antispam_bee_country_spam_apikey', '' );
+
+		$response = wp_safe_remote_get(
 			esc_url_raw(
 				sprintf(
-					'http://www.stopforumspam.com/api?ip=%s&f=json',
-					$ip
+					'https://www.iplocate.io/api/lookup/%s?apikey=%s',
+					self::_anonymize_ip( $ip ),
+					$apikey
 				),
-				'http'
+				'https'
 			)
 		);
 
-		/* Response error? */
-		if ( is_wp_error($response) ) {
+		if ( is_wp_error( $response ) ) {
 			return false;
 		}
 
-		/* Get JSON */
-		$json = wp_remote_retrieve_body($response);
-
-		/* Decode JSON */
-		$result = json_decode($json);
-
-		/* Empty data */
-		if ( empty($result->success) ) {
+		if ( wp_remote_retrieve_response_code( $response ) !== 200 ) {
 			return false;
 		}
 
-		/* Return status */
-		return (bool) $result->ip->appears;
+		$body = (string) wp_remote_retrieve_body( $response );
+
+		$json = json_decode( $body, true );
+
+		// Check if response is valid json.
+		if ( ! is_array( $json ) ) {
+			return false;
+		}
+
+		if ( empty( $json['country_code'] ) ) {
+			return false;
+		}
+
+		$country = strtoupper( $json['country_code'] );
+
+		if ( empty( $country ) || strlen( $country ) !== 2 ) {
+			return false;
+		}
+
+		if ( ! empty( $denied ) ) {
+			return ( in_array( $country, $denied, true ) );
+		}
+
+		return ( ! in_array( $country, $allowed, true ) );
 	}
 
 
 	/**
-	* Prüfung auf BBCode Spam
-	*
-	* @since   2.5.1
-	* @change  2.5.1
-	*
-	* @param   string   $body  Inhalt eines Kommentars
-	* @return  boolean         TRUE bei BBCode im Inhalt
-	*/
-
-	private static function _is_bbcode_spam($body)
-	{
-		return (bool) preg_match('/\[url[=\]].*\[\/url\]/is', $body);
+	 * Check for BBCode spam
+	 *
+	 * @since   2.5.1
+	 *
+	 * @param   string $body Content of a comment.
+	 * @return  boolean      True for BBCode in content
+	 */
+	private static function _is_bbcode_spam( $body ) {
+		return (bool) preg_match( '/\[url[=\]].*\[\/url\]/is', $body );
 	}
 
 
 	/**
-	* Prüfung auf eine bereits freigegebene E-Mail-Adresse
-	*
-	* @since   2.0
-	* @change  2.5.1
-	*
-	* @param   string   $email  E-Mail-Adresse
-	* @return  boolean          TRUE bei einem gefundenen Eintrag
-	*/
-
-	private static function _is_approved_email($email)
-	{
-		/* Global */
+	 * Check for an already approved e-mail address
+	 *
+	 * @since  2.0
+	 * @since  2.5.1
+	 *
+	 * @param   string $email E-mail address.
+	 * @return  boolean       True for a found entry.
+	 */
+	private static function _is_approved_email( $email ) {
 		global $wpdb;
 
-		/* Suchen */
 		$result = $wpdb->get_var(
 			$wpdb->prepare(
 				"SELECT `comment_ID` FROM `$wpdb->comments` WHERE `comment_approved` = '1' AND `comment_author_email` = %s LIMIT 1",
-				wp_unslash($email)
+				wp_unslash( $email )
 			)
 		);
 
-		/* Gefunden? */
 		if ( $result ) {
 			return true;
 		}
@@ -1724,71 +1916,306 @@ class Antispam_Bee {
 		return false;
 	}
 
-
 	/**
-	* Check for a fake IP
-	*
-	* @since   2.0
-	* @change  2.6.2
-	*
-	* @param   string   $ip    Client IP
-	* @param   string   $host  Client Host [optional]
-	* @return  boolean         TRUE if fake IP
-	*/
+	 * Check for unwanted languages
+	 *
+	 * @since  2.0
+	 * @since  2.6.6
+	 * @since  2.8.2
+	 *
+	 * @param  string $comment_content Content of the comment.
+	 *
+	 * @return boolean TRUE if it is spam.
+	 */
+	private static function _is_lang_spam( $comment_content ) {
+		$allowed_lang = (array) self::get_option( 'translate_lang' );
 
-	private static function _is_fake_ip($client_ip, $client_host = false)
-	{
-		/* Remote Host */
-		$host_by_ip = gethostbyaddr($client_ip);
+		$comment_text = wp_strip_all_tags( $comment_content );
 
-		/* IPv6 */
-		if ( self::_is_ipv6($client_ip) ) {
-			return $client_ip != $host_by_ip;
+		if ( empty( $allowed_lang ) || empty( $comment_text ) ) {
+			return false;
 		}
 
-		/* IPv4 / Comment */
-		if ( empty($client_host) ) {
-			$ip_by_host = gethostbyname($host_by_ip);
+		/**
+		 * Filters the detected language. With this filter, other detection methods can skip in and detect the language.
+		 *
+		 * @since 2.8.2
+		 *
+		 * @param null   $detected_lang The detected language.
+		 * @param string $comment_text  The text, to detect the language.
+		 *
+		 * @return null|string The detected language or null.
+		 */
+		$detected_lang = apply_filters( 'antispam_bee_detected_lang', null, $comment_text );
+		if ( null !== $detected_lang ) {
+			return ! in_array( $detected_lang, $allowed_lang, true );
+		}
 
-			if ( $ip_by_host === $host_by_ip ) {
-				return false;
+		$word_count = 0;
+		$text       = trim( preg_replace( "/[\n\r\t ]+/", ' ', $comment_text ), ' ' );
+
+		/*
+		 * translators: If your word count is based on single characters (e.g. East Asian characters),
+		 * enter 'characters_excluding_spaces' or 'characters_including_spaces'. Otherwise, enter 'words'.
+		 * Do not translate into your own language.
+		 */
+		if ( strpos( _x( 'words', 'Word count type. Do not translate!' ), 'characters' ) === 0 && preg_match( '/^utf\-?8$/i', get_option( 'blog_charset' ) ) ) { // phpcs:ignore WordPress.WP.I18n.MissingArgDomain
+			preg_match_all( '/./u', $text, $words_array );
+			if ( isset( $words_array[0] ) ) {
+				$word_count = count( $words_array[0] );
 			}
-
-		/* IPv4 / Trackback */
 		} else {
-			if ( $host_by_ip === $client_ip ) {
-				return true;
-			}
-
-			$ip_by_host = gethostbyname($client_host);
+			$words_array = preg_split( "/[\n\r\t ]+/", $text, -1, PREG_SPLIT_NO_EMPTY );
+			$word_count  = count( $words_array );
 		}
 
-		if ( strpos( $client_ip, self::_cut_ip($ip_by_host) ) === false ) {
-			return true;
+		if ( $word_count < 10 ) {
+			return false;
 		}
 
-		return false;
+		$response = wp_safe_remote_post(
+			'https://api.pluginkollektiv.org/language/v1/',
+			array( 'body' => wp_json_encode( array( 'body' => $comment_text ) ) )
+		);
+
+		if ( is_wp_error( $response )
+			|| wp_remote_retrieve_response_code( $response ) !== 200 ) {
+			return false;
+		}
+
+		$detected_lang = wp_remote_retrieve_body( $response );
+		if ( ! $detected_lang ) {
+			return false;
+		}
+
+		$detected_lang = json_decode( $detected_lang );
+		if ( ! $detected_lang || ! isset( $detected_lang->code ) ) {
+			return false;
+		}
+
+		return ! in_array( self::_map_lang_code( $detected_lang->code ), $allowed_lang, true );
 	}
 
+	/**
+	 * Map franc language codes
+	 *
+	 * @since   2.9.0
+	 *
+	 * @param  string $franc_code The franc code, received from the service.
+	 *
+	 * @return string             Mapped ISO code
+	 */
+	private static function _map_lang_code( $franc_code ) {
+		$codes = array(
+			'zha' => 'za',
+			'zho' => 'zh',
+			'zul' => 'zu',
+			'yid' => 'yi',
+			'yor' => 'yo',
+			'xho' => 'xh',
+			'wln' => 'wa',
+			'wol' => 'wo',
+			'ven' => 've',
+			'vie' => 'vi',
+			'vol' => 'vo',
+			'uig' => 'ug',
+			'ukr' => 'uk',
+			'urd' => 'ur',
+			'uzb' => 'uz',
+			'tah' => 'ty',
+			'tam' => 'ta',
+			'tat' => 'tt',
+			'tel' => 'te',
+			'tgk' => 'tg',
+			'tgl' => 'tl',
+			'tha' => 'th',
+			'tir' => 'ti',
+			'ton' => 'to',
+			'tsn' => 'tn',
+			'tso' => 'ts',
+			'tuk' => 'tk',
+			'tur' => 'tr',
+			'twi' => 'tw',
+			'sag' => 'sg',
+			'san' => 'sa',
+			'sin' => 'si',
+			'slk' => 'sk',
+			'slv' => 'sl',
+			'sme' => 'se',
+			'smo' => 'sm',
+			'sna' => 'sn',
+			'snd' => 'sd',
+			'som' => 'so',
+			'sot' => 'st',
+			'spa' => 'es',
+			'sqi' => 'sq',
+			'srd' => 'sc',
+			'srp' => 'sr',
+			'ssw' => 'ss',
+			'sun' => 'su',
+			'swa' => 'sw',
+			'swe' => 'sv',
+			'roh' => 'rm',
+			'ron' => 'ro',
+			'run' => 'rn',
+			'rus' => 'ru',
+			'que' => 'qu',
+			'pan' => 'pa',
+			'pli' => 'pi',
+			'pol' => 'pl',
+			'por' => 'pt',
+			'pus' => 'ps',
+			'oci' => 'oc',
+			'oji' => 'oj',
+			'ori' => 'or',
+			'orm' => 'om',
+			'oss' => 'os',
+			'nau' => 'na',
+			'nav' => 'nv',
+			'nbl' => 'nr',
+			'nde' => 'nd',
+			'ndo' => 'ng',
+			'nep' => 'ne',
+			'nld' => 'nl',
+			'nno' => 'nn',
+			'nob' => 'nb',
+			'nor' => 'no',
+			'nya' => 'ny',
+			'mah' => 'mh',
+			'mal' => 'ml',
+			'mar' => 'mr',
+			'mkd' => 'mk',
+			'mlg' => 'mg',
+			'mlt' => 'mt',
+			'mon' => 'mn',
+			'mri' => 'mi',
+			'msa' => 'ms',
+			'mya' => 'my',
+			'lao' => 'lo',
+			'lat' => 'la',
+			'lav' => 'lv',
+			'lim' => 'li',
+			'lin' => 'ln',
+			'lit' => 'lt',
+			'ltz' => 'lb',
+			'lub' => 'lu',
+			'lug' => 'lg',
+			'kal' => 'kl',
+			'kan' => 'kn',
+			'kas' => 'ks',
+			'kat' => 'ka',
+			'kau' => 'kr',
+			'kaz' => 'kk',
+			'khm' => 'km',
+			'kik' => 'ki',
+			'kin' => 'rw',
+			'kir' => 'ky',
+			'kom' => 'kv',
+			'kon' => 'kg',
+			'kor' => 'ko',
+			'kua' => 'kj',
+			'kur' => 'ku',
+			'jav' => 'jv',
+			'jpn' => 'ja',
+			'ibo' => 'ig',
+			'ido' => 'io',
+			'iii' => 'ii',
+			'iku' => 'iu',
+			'ile' => 'ie',
+			'ina' => 'ia',
+			'ind' => 'id',
+			'ipk' => 'ik',
+			'isl' => 'is',
+			'ita' => 'it',
+			'hat' => 'ht',
+			'hau' => 'ha',
+			'hbs' => 'sh',
+			'heb' => 'he',
+			'her' => 'hz',
+			'hin' => 'hi',
+			'hmo' => 'ho',
+			'hrv' => 'hr',
+			'hun' => 'hu',
+			'hye' => 'hy',
+			'gla' => 'gd',
+			'gle' => 'ga',
+			'glg' => 'gl',
+			'glv' => 'gv',
+			'grn' => 'gn',
+			'guj' => 'gu',
+			'fao' => 'fo',
+			'fas' => 'fa',
+			'fij' => 'fj',
+			'fin' => 'fi',
+			'fra' => 'fr',
+			'fry' => 'fy',
+			'ful' => 'ff',
+			'ell' => 'el',
+			'eng' => 'en',
+			'epo' => 'eo',
+			'est' => 'et',
+			'eus' => 'eu',
+			'ewe' => 'ee',
+			'dan' => 'da',
+			'deu' => 'de',
+			'div' => 'dv',
+			'dzo' => 'dz',
+			'cat' => 'ca',
+			'ces' => 'cs',
+			'cha' => 'ch',
+			'che' => 'ce',
+			'chu' => 'cu',
+			'chv' => 'cv',
+			'cor' => 'kw',
+			'cos' => 'co',
+			'cre' => 'cr',
+			'cym' => 'cy',
+			'bak' => 'ba',
+			'bam' => 'bm',
+			'bel' => 'be',
+			'ben' => 'bn',
+			'bis' => 'bi',
+			'bod' => 'bo',
+			'bos' => 'bs',
+			'bre' => 'br',
+			'bul' => 'bg',
+			'aar' => 'aa',
+			'abk' => 'ab',
+			'afr' => 'af',
+			'aka' => 'ak',
+			'amh' => 'am',
+			'ara' => 'ar',
+			'arg' => 'an',
+			'asm' => 'as',
+			'ava' => 'av',
+			'ave' => 'ae',
+			'aym' => 'ay',
+			'aze' => 'az',
+			'nds' => 'de',
+		);
+
+		if ( array_key_exists( $franc_code, $codes ) ) {
+			return $codes[ $franc_code ];
+		}
+
+		return $franc_code;
+	}
 
 	/**
-	* Kürzung der IP-Adressen
-	*
-	* @since   0.1
-	* @change  2.5.1
-	*
-	* @param   string   $ip       Original IP
-	* @param   boolean  $cut_end  Kürzen vom Ende?
-	* @return  string             Gekürzte IP
-	*/
-
-	private static function _cut_ip($ip, $cut_end = true)
-	{
-		/* Trenner */
-		$separator = ( self::_is_ipv4($ip) ? '.' : ':' );
+	 * Trim IP addresses
+	 *
+	 * @since  0.1
+	 * @since  2.5.1
+	 *
+	 * @param   string  $ip       Original IP.
+	 * @param   boolean $cut_end  Shortening the end.
+	 * @return  string            Shortened IP.
+	 */
+	private static function _cut_ip( $ip, $cut_end = true ) {
+		$separator = ( self::_is_ipv4( $ip ) ? '.' : ':' );
 
 		return str_replace(
-			( $cut_end ? strrchr( $ip, $separator) : strstr( $ip, $separator) ),
+			( $cut_end ? strrchr( $ip, $separator ) : strstr( $ip, $separator ) ),
 			'',
 			$ip
 		);
@@ -1796,37 +2223,31 @@ class Antispam_Bee {
 
 
 	/**
-	* Anonymisierung der IP-Adressen
-	*
-	* @since   2.5.1
-	* @change  2.5.1
-	*
-	* @param   string  $ip  Original IP
-	* @return  string       Anonyme IP
-	*/
-
-	private static function _anonymize_ip($ip)
-	{
-		if ( self::_is_ipv4($ip) ) {
-			return self::_cut_ip($ip). '.0';
+	 * Anonymize the IP addresses
+	 *
+	 * @since   2.5.1
+	 *
+	 * @param   string $ip Original IP.
+	 * @return  string     Anonymous IP.
+	 */
+	private static function _anonymize_ip( $ip ) {
+		if ( self::_is_ipv4( $ip ) ) {
+			return self::_cut_ip( $ip ) . '.0';
 		}
 
-		return self::_cut_ip($ip, false). ':0:0:0:0:0:0:0';
+		return self::_cut_ip( $ip, false ) . ':0:0:0:0:0:0:0';
 	}
 
 
 	/**
-	* Dreht die IP-Adresse
-	*
-	* @since   2.4.5
-	* @change  2.4.5
-	*
-	* @param   string   $ip  IP-Adresse
-	* @return  string        Gedrehte IP-Adresse
-	*/
-
-	private static function _reverse_ip($ip)
-	{
+	 * Rotates the IP address
+	 *
+	 * @since   2.4.5
+	 *
+	 * @param   string $ip  IP address.
+	 * @return  string      Turned IP address.
+	 */
+	private static function _reverse_ip( $ip ) {
 		return implode(
 			'.',
 			array_reverse(
@@ -1840,148 +2261,141 @@ class Antispam_Bee {
 
 
 	/**
-	* Check for an IPv4 address
-	*
-	* @since   2.4
-	* @change  2.6.4
-	*
-	* @param   string   $ip  IP to validate
-	* @return  integer       TRUE if IPv4
-	*/
-
-	private static function _is_ipv4($ip)
-	{
-		if ( function_exists('filter_var') ) {
+	 * Check for an IPv4 address
+	 *
+	 * @since  2.4
+	 * @since  2.6.4
+	 *
+	 * @param   string $ip  IP to validate.
+	 * @return  integer       TRUE if IPv4.
+	 */
+	private static function _is_ipv4( $ip ) {
+		if ( function_exists( 'filter_var' ) ) {
 			return filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 ) !== false;
 		} else {
-			return preg_match('/^\d{1,3}(\.\d{1,3}){3,3}$/', $ip);
+			return preg_match( '/^\d{1,3}(\.\d{1,3}){3}$/', $ip );
 		}
 	}
 
 
 	/**
-	* Check for an IPv6 address
-	*
-	* @since   2.6.2
-	* @change  2.6.4
-	*
-	* @param   string   $ip  IP to validate
-	* @return  boolean       TRUE if IPv6
-	*/
-
-	private static function _is_ipv6($ip)
-	{
-		if ( function_exists('filter_var') ) {
+	 * Check for an IPv6 address
+	 *
+	 * @since  2.6.2
+	 * @since  2.6.4
+	 *
+	 * @param   string $ip  IP to validate.
+	 * @return  boolean       TRUE if IPv6.
+	 */
+	private static function _is_ipv6( $ip ) {
+		if ( function_exists( 'filter_var' ) ) {
 			return filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6 ) !== false;
 		} else {
-			return ! self::_is_ipv4($ip);
+			return ! self::_is_ipv4( $ip );
 		}
 	}
 
 
 	/**
-	* Prüfung auf Mobile
-	*
-	* @since   0.1
-	* @change  2.4
-	*
-	* @return  boolean  TRUE, wenn "wptouch" aktiv ist
-	*/
+	 * Testing on mobile devices
+	 *
+	 * @since  0.1
+	 * @since  2.4
+	 *
+	 * @return  boolean  TRUE if "wptouch" is active
+	 */
+	private static function _is_mobile() {
+		return strpos( get_template_directory(), 'wptouch' );
+	}
 
-	private static function _is_mobile()
-	{
-		return strpos(TEMPLATEPATH, 'wptouch');
+	/**
+	 * Testing if we are on an AMP site.
+	 *
+	 * Starting with v2.0, amp_is_request() is the preferred method to check,
+	 * but we fall back to the then deprecated is_amp_endpoint() as needed.
+	 *
+	 * @return bool
+	 */
+	private static function _is_amp() {
+		return ( function_exists( 'amp_is_request' ) && amp_is_request() ) || ( function_exists( 'is_amp_endpoint' ) && is_amp_endpoint() );
 	}
 
 
 
-
-	############################
-	#####  SPAM-BEHANDLUNG  ####
-	############################
-
-
-	/**
-	* Ausführung des Lösch-/Markier-Vorgangs
-	*
-	* @since   0.1
-	* @change  2.6.0
-	*
-	* @param   array    $comment  Unbehandelte Kommentardaten
-	* @param   string   $reason   Verdachtsgrund
-	* @param   boolean  $is_ping  Ping (ja oder nein) [optional]
-	* @return  array    $comment  Behandelte Kommentardaten
+	/*
+	*   ############################
+	*   #####  SPAM-TREATMENT  #####
+	*   ############################
 	*/
 
-	private static function _handle_spam_request($comment, $reason, $is_ping = false)
-	{
-		/* Optionen */
+	/**
+	 * Execution of the delete/marking process
+	 *
+	 * @since  0.1
+	 * @since  2.6.0
+	 *
+	 * @param   array   $comment  Untreated commentary data.
+	 * @param   string  $reason   Reason for suspicion.
+	 * @param   boolean $is_ping  Ping (optional).
+	 * @return  array   $comment  Treated commentary data.
+	 */
+	private static function _handle_spam_request( $comment, $reason, $is_ping = false ) {
+
 		$options = self::get_options();
 
-		/* Einstellungen */
-		$spam_remove = !$options['flag_spam'];
-		$spam_notice = !$options['no_notice'];
+		$spam_remove = ! $options['flag_spam'];
+		$spam_notice = ! $options['no_notice'];
 
-		/* Filter-Einstellungen */
+		// Filter settings.
 		$ignore_filter = $options['ignore_filter'];
-		$ignore_type = $options['ignore_type'];
-		$ignore_reason = in_array($reason, (array)$options['ignore_reasons']);
+		$ignore_type   = $options['ignore_type'];
+		$ignore_reason = in_array( $reason, (array) $options['ignore_reasons'], true );
 
-		/* Spam merken */
-		self::_update_spam_log($comment);
+		// Remember spam.
+		self::_update_spam_log( $comment );
 		self::_update_spam_count();
 		self::_update_daily_stats();
 
-		/* Spam löschen */
+		// Delete spam.
 		if ( $spam_remove ) {
 			self::_go_in_peace();
 		}
 
-		/* Typen behandeln */
-		if ( $ignore_filter && (( $ignore_type == 1 && $is_ping ) or ( $ignore_type == 2 && !$is_ping )) ) {
+		if ( $ignore_filter && ( ( 1 === (int) $ignore_type && $is_ping ) || ( 2 === (int) $ignore_type && ! $is_ping ) ) ) {
 			self::_go_in_peace();
 		}
 
-		/* Spamgrund */
+		// Spam reason.
 		if ( $ignore_reason ) {
 			self::_go_in_peace();
 		}
-
-		/* Spam-Grund */
 		self::$_reason = $reason;
 
-		/* Spam markieren */
+		// Mark spam.
 		add_filter(
 			'pre_comment_approved',
-			create_function(
-				'',
-				'return "spam";'
+			array(
+				__CLASS__,
+				'return_spam',
 			)
 		);
 
-		/* E-Mail senden */
-		add_filter(
-			'trackback_post',
-			array(
-				__CLASS__,
-				'send_mail_notification'
-			)
-		);
-		add_filter(
+		// Send e-mail.
+		add_action(
 			'comment_post',
 			array(
 				__CLASS__,
-				'send_mail_notification'
+				'send_mail_notification',
 			)
 		);
 
-		/* Spam reason as comment meta */
+		// Spam reason as comment meta.
 		if ( $spam_notice ) {
-			add_filter(
+			add_action(
 				'comment_post',
 				array(
 					__CLASS__,
-					'add_spam_reason_to_comment'
+					'add_spam_reason_to_comment',
 				)
 			);
 		}
@@ -1991,32 +2405,27 @@ class Antispam_Bee {
 
 
 	/**
-	* Logfile mit erkanntem Spam
-	*
-	* @since   2.5.7
-	* @change  2.6.1
-	*
-	* @param   array   $comment  Array mit Kommentardaten
-	* @return  mixed   			 FALSE im Fehlerfall
-	*/
-
-	private static function _update_spam_log($comment)
-	{
-		/* Skip logfile? */
-		if ( ! defined('ANTISPAM_BEE_LOG_FILE') OR ! ANTISPAM_BEE_LOG_FILE OR ! is_writable(ANTISPAM_BEE_LOG_FILE) OR validate_file(ANTISPAM_BEE_LOG_FILE) === 1 ) {
+	 * Logfile with detected spam
+	 *
+	 * @since  2.5.7
+	 * @since  2.6.1
+	 *
+	 * @param   array $comment Array with commentary data.
+	 * @return  mixed        FALSE in case of error
+	 */
+	private static function _update_spam_log( $comment ) {
+		if ( ! defined( 'ANTISPAM_BEE_LOG_FILE' ) || ! ANTISPAM_BEE_LOG_FILE || ! is_writable( ANTISPAM_BEE_LOG_FILE ) || validate_file( ANTISPAM_BEE_LOG_FILE ) === 1 ) {
 			return false;
 		}
 
-		/* Compose entry */
 		$entry = sprintf(
 			'%s comment for post=%d from host=%s marked as spam%s',
-			current_time('mysql'),
+			current_time( 'mysql' ),
 			$comment['comment_post_ID'],
 			$comment['comment_author_IP'],
 			PHP_EOL
 		);
 
-		/* Write */
 		file_put_contents(
 			ANTISPAM_BEE_LOG_FILE,
 			$entry,
@@ -2026,77 +2435,81 @@ class Antispam_Bee {
 
 
 	/**
-	* Sendet den 403-Header und beendet die Verbindung
-	*
-	* @since   2.5.6
-	* @change  2.5.6
-	*/
-
-	private static function _go_in_peace()
-	{
-		status_header(403);
-		die('Spam deleted.');
+	 * Sends the 403 header and terminates the connection
+	 *
+	 * @since   2.5.6
+	 */
+	private static function _go_in_peace() {
+		status_header( 403 );
+		die( 'Spam deleted.' );
 	}
 
 
 	/**
-	* Return real client IP
-	*
-	* @since   2.6.1
-	* @change  2.6.1
-	*
-	* @return  mixed  $ip  Client IP
-	*/
+	 * Return real client IP
+	 *
+	 * @since   2.6.1
+	 * @since   2.11.4 Only use `REMOTE_ADDR` to get the IP, make it filterable with `pre_comment_user_ip`
+	 * @since   2.11.5 Switch to own filter `antispam_bee_trusted_ip`
+	 *
+	 * @hook    string  pre_comment_user_ip  The Client IP
+	 *
+	 * @return  string  $ip  Client IP
+	 */
+	public static function get_client_ip() {
+		/**
+		 * Hook for allowing to modify the client IP used by Antispam Bee. Default value is the `REMOTE_ADDR`.
+		 * IMPORTANT: Don’t return an empty string here, otherwise all comments are marked as spam.
+		 *
+		 * @link https://developer.wordpress.org/reference/hooks/pre_comment_user_ip/
+		 *
+		 * @return string
+		 */
+		// phpcs:disable WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+		// phpcs:disable WordPress.Security.ValidatedSanitizedInput.InputNotValidated
+		// phpcs:disable WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		return self::_sanitize_ip( (string) apply_filters( 'antispam_bee_trusted_ip', wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) );
+		// phpcs:enable WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+		// phpcs:enable WordPress.Security.ValidatedSanitizedInput.InputNotValidated
+		// phpcs:enable WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+	}
 
-	public static function get_client_ip()
-	{
-		if ( isset($_SERVER['HTTP_CLIENT_IP']) ) {
-			$ip = $_SERVER['HTTP_CLIENT_IP'];
-		} else if ( isset($_SERVER['HTTP_X_FORWARDED_FOR']) ) {
-			$ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
-		} else if ( isset($_SERVER['HTTP_X_FORWARDED']) ) {
-			$ip = $_SERVER['HTTP_X_FORWARDED'];
-		} else if ( isset($_SERVER['HTTP_FORWARDED_FOR']) ) {
-			$ip = $_SERVER['HTTP_FORWARDED_FOR'];
-		} else if ( isset($_SERVER['HTTP_FORWARDED']) ) {
-			$ip = $_SERVER['HTTP_FORWARDED'];
-		} else if ( isset($_SERVER['REMOTE_ADDR']) ) {
-			$ip = $_SERVER['REMOTE_ADDR'];
-		} else {
-			return '';
+	/**
+	 * Sanitize an IP string.
+	 *
+	 * @param string $raw_ip The raw IP.
+	 *
+	 * @return string The sanitized IP or an empty string.
+	 */
+	private static function _sanitize_ip( $raw_ip ) {
+
+		if ( strpos( $raw_ip, ',' ) !== false ) {
+			$ips    = explode( ',', $raw_ip );
+			$raw_ip = trim( $ips[0] );
 		}
-
-		if ( strpos($ip, ',') !== false ) {
-			$ips = explode(',', $ip);
-			$ip = trim(@$ips[0]);
-		}
-
-		if ( function_exists('filter_var') ) {
-			return filter_var(
-				$ip,
+		if ( function_exists( 'filter_var' ) ) {
+			return (string) filter_var(
+				$raw_ip,
 				FILTER_VALIDATE_IP
 			);
 		}
 
-		return preg_replace(
-			'/[^0-9a-f:\., ]/si',
+		return (string) preg_replace(
+			'/[^0-9a-f:. ]/si',
 			'',
-			$ip
+			$raw_ip
 		);
 	}
 
 
 	/**
-	* Add spam reason as comment data
-	*
-	* @since   2.6.0
-	* @change  2.6.0
-	*
-	* @param   integer  $comment_id  Comment ID
-	*/
-
-	public static function add_spam_reason_to_comment( $comment_id )
-	{
+	 * Add spam reason as comment data
+	 *
+	 * @since   2.6.0
+	 *
+	 * @param   integer $comment_id  Comment ID.
+	 */
+	public static function add_spam_reason_to_comment( $comment_id ) {
 		add_comment_meta(
 			$comment_id,
 			'antispam_bee_reason',
@@ -2106,138 +2519,176 @@ class Antispam_Bee {
 
 
 	/**
-	* Delete spam reason as comment data
-	*
-	* @since   2.6.0
-	* @change  2.6.0
-	*
-	* @param   integer  $comment_id  Comment ID
-	*/
-
-	public static function delete_spam_reason_by_comment( $comment_id )
-	{
+	 * Delete spam reason as comment data
+	 *
+	 * @since   2.6.0
+	 *
+	 * @param   integer $comment_id  Comment ID.
+	 */
+	public static function delete_spam_reason_by_comment( $comment_id ) {
 		delete_comment_meta(
 			$comment_id,
 			'antispam_bee_reason'
 		);
 	}
 
+	/**
+	 * Updates the Antispam Bee reason for manual transitions
+	 *
+	 * @since   2.9.2
+	 * @param  WP_Comment $comment Comment Object.
+	 */
+	public static function update_antispam_bee_reason( $comment ) {
+		update_comment_meta( $comment->comment_ID, 'antispam_bee_reason', 'manually' );
+	}
+
 
 	/**
-	* Versand einer Benachrichtigung via E-Mail
-	*
-	* @since   0.1
-	* @change  2.5.7
-	*
-	* @hook    string  antispam_bee_notification_subject  Custom subject for notification mails
-	*
-	* @param   intval  $id  ID des Kommentars
-	* @return  intval  $id  ID des Kommentars
-	*/
+	 * Get the current post ID.
+	 *
+	 * @since   2.7.1
+	 */
+	public static function populate_post_id() {
 
-	public static function send_mail_notification($id)
-	{
-		/* Optionen */
+		if ( null === self::$_current_post_id ) {
+			self::$_current_post_id = get_the_ID();
+		}
+	}
+
+
+	/**
+	 * Send notification via e-mail
+	 *
+	 * @since  0.1
+	 * @since  2.5.7
+	 * @since  2.10.0 Change plugin website URL
+	 *
+	 * @hook    string  antispam_bee_notification_subject  Custom subject for notification mails
+	 *
+	 * @param   int $id  ID of the comment.
+	 * @return  int  $id  ID of the comment.
+	 */
+	public static function send_mail_notification( $id ) {
 		$options = self::get_options();
 
-		/* Keine Benachrichtigung? */
-		if ( !$options['email_notify'] ) {
+		if ( ! $options['email_notify'] ) {
 			return $id;
 		}
 
-		/* Kommentar */
-		$comment = get_comment($id, ARRAY_A);
+		$comment = get_comment( $id, ARRAY_A );
 
-		/* Keine Werte? */
-		if ( empty($comment) ) {
+		if ( empty( $comment ) ) {
 			return $id;
 		}
 
-		/* Parent-Post */
-		if ( ! $post = get_post($comment['comment_post_ID']) ) {
+		$post = get_post( $comment['comment_post_ID'] );
+		if ( ! $post ) {
 			return $id;
 		}
 
-		/* Sprache laden */
 		self::load_plugin_lang();
+		self::add_reasons_to_defaults();
 
-		/* Betreff */
 		$subject = sprintf(
 			'[%s] %s',
 			stripslashes_deep(
+				// phpcs:ignore PHPCompatibility.ParameterValues.NewHTMLEntitiesEncodingDefault.NotSet
 				html_entity_decode(
-					get_bloginfo('name'),
+					get_bloginfo( 'name' ),
 					ENT_QUOTES
 				)
 			),
-			__('Comment marked as spam', 'antispam-bee')
+			esc_html__( 'Comment marked as spam', 'antispam-bee' )
 		);
 
-		/* Content */
-		if ( !$content = strip_tags(stripslashes($comment['comment_content'])) ) {
+		// Content.
+		$content = strip_tags( stripslashes( $comment['comment_content'] ) );
+		if ( ! $content ) {
 			$content = sprintf(
 				'-- %s --',
-				__('Content removed by Antispam Bee', 'antispam-bee')
+				esc_html__( 'Content removed by Antispam Bee', 'antispam-bee' )
 			);
 		}
 
-		/* Body */
+		// Prepare Comment Type.
+		$comment_name = __( 'Comment', 'antispam-bee' );
+		if ( 'trackback' === $comment['comment_type'] ) {
+			$comment_name = __( 'Trackback', 'antispam-bee' );
+		}
+		if ( 'pingback' === $comment['comment_type'] ) {
+			$comment_name = __( 'Pingback', 'antispam-bee' );
+		}
+
+		// Body.
 		$body = sprintf(
 			"%s \"%s\"\r\n\r\n",
-			__('New spam comment on your post', 'antispam-bee'),
-			strip_tags($post->post_title)
-		).sprintf(
+			esc_html__( 'New spam comment on your post', 'antispam-bee' ),
+			strip_tags( $post->post_title )
+		) . sprintf(
 			"%s: %s\r\n",
-			__('Author', 'antispam-bee'),
-			( empty($comment['comment_author']) ? '' : strip_tags($comment['comment_author']) )
-		).sprintf(
+			esc_html__( 'Author', 'antispam-bee' ),
+			( empty( $comment['comment_author'] ) ? '' : strip_tags( $comment['comment_author'] ) )
+		) . sprintf(
 			"URL: %s\r\n",
-			esc_url($comment['comment_author_url']) /* empty check exists */
-		).sprintf(
+			// empty check exists.
+			esc_url( $comment['comment_author_url'] )
+		) . sprintf(
 			"%s: %s\r\n",
-			__('Type', 'antispam-bee'),
-			__( ( empty($comment['comment_type']) ? 'Comment' : 'Trackback' ), 'antispam-bee' )
-		).sprintf(
+			esc_html__( 'Type', 'antispam-bee' ),
+			esc_html( $comment_name )
+		) . sprintf(
 			"Whois: http://whois.arin.net/rest/ip/%s\r\n",
 			$comment['comment_author_IP']
-		).sprintf(
+		) . sprintf(
 			"%s: %s\r\n\r\n",
-			__('Spam Reason', 'antispam-bee'),
-			__(self::$defaults['reasons'][self::$_reason], 'antispam-bee')
-		).sprintf(
+			esc_html__( 'Spam Reason', 'antispam-bee' ),
+			esc_html( self::$defaults['reasons'][ self::$_reason ] )
+		) . sprintf(
 			"%s\r\n\r\n\r\n",
 			$content
-		).(
+		) . (
 			EMPTY_TRASH_DAYS ? (
 				sprintf(
 					"%s: %s\r\n",
-					__('Trash it', 'antispam-bee'),
-					admin_url('comment.php?action=trash&c=' .$id)
+					esc_html__( 'Trash it', 'antispam-bee' ),
+					admin_url( 'comment.php?action=trash&c=' . $id )
 				)
 			) : (
 				sprintf(
 					"%s: %s\r\n",
-					__('Delete it', 'antispam-bee'),
-					admin_url('comment.php?action=delete&c=' .$id)
+					esc_html__( 'Delete it', 'antispam-bee' ),
+					admin_url( 'comment.php?action=delete&c=' . $id )
 				)
 			)
-		).sprintf(
-				"%s: %s\r\n",
-			__('Approve it', 'antispam-bee'),
-			admin_url('comment.php?action=approve&c=' .$id)
-		).sprintf(
+		) . sprintf(
+			"%s: %s\r\n",
+			esc_html__( 'Approve it', 'antispam-bee' ),
+			admin_url( 'comment.php?action=approve&c=' . $id )
+		) . sprintf(
 			"%s: %s\r\n\r\n",
-			__('Spam list', 'antispam-bee'),
-			admin_url('edit-comments.php?comment_status=spam')
-		).sprintf(
+			esc_html__( 'Spam list', 'antispam-bee' ),
+			admin_url( 'edit-comments.php?comment_status=spam' )
+		) . sprintf(
 			"%s\r\n%s\r\n",
-			__('Notify message by Antispam Bee', 'antispam-bee'),
-			__('http://antispambee.com', 'antispam-bee')
+			esc_html__( 'Notify message by Antispam Bee', 'antispam-bee' ),
+			esc_html__( 'https://antispambee.pluginkollektiv.org/', 'antispam-bee' )
 		);
 
-		/* Send */
 		wp_mail(
-			get_bloginfo('admin_email'),
+			/**
+			 * Filters the recipients of the spam notification.
+			 *
+			 * @param array The recipients array.
+			 */
+			apply_filters(
+				'antispam_bee_notification_recipients',
+				array( get_bloginfo( 'admin_email' ) )
+			),
+			/**
+			 * Filters the subject of the spam notification.
+			 *
+			 * @param string $subject subject line.
+			 */
 			apply_filters(
 				'antispam_bee_notification_subject',
 				$subject
@@ -2250,134 +2701,365 @@ class Antispam_Bee {
 
 
 
-
-	############################
-	#######  STATISTIK  ########
-	############################
-
-
-	/**
-	* Rückgabe der Anzahl von Spam-Kommentaren
-	*
-	* @since   0.1
-	* @change  2.4
-	*
-	* @param   intval  $count  Anzahl der Spam-Kommentare
+	/*
+	*   ############################
+	*   #######  STATISTICS  #######
+	*   ############################
 	*/
 
-	private static function _get_spam_count()
-	{
-		/* Init */
-		$count = self::get_option('spam_count');
+	/**
+	 * Return the number of spam comments
+	 *
+	 * @since  0.1
+	 * @since  2.4
+	 */
+	private static function _get_spam_count() {
+		// Init.
+		$count = intval( self::get_option( 'spam_count' ) );
 
-		/* Fire */
-		return ( get_locale() == 'de_DE' ? number_format($count, 0, '', '.') : number_format_i18n($count) );
+		// Fire.
+		return ( get_locale() === 'de_DE' ? number_format( $count, 0, '', '.' ) : number_format_i18n( $count ) );
 	}
 
 
 	/**
-	* Ausgabe der Anzahl von Spam-Kommentaren
-	*
-	* @since   0.1
-	* @change  2.4
-	*/
-
-	public static function the_spam_count()
-	{
+	 * Output the number of spam comments
+	 *
+	 * @since  0.1
+	 * @since  2.4
+	 */
+	public static function the_spam_count() {
 		echo esc_html( self::_get_spam_count() );
 	}
 
 
 	/**
-	* Aktualisierung der Anzahl von Spam-Kommentaren
-	*
-	* @since   0.1
-	* @change  2.6.1
-	*/
-
-	private static function _update_spam_count()
-	{
-		/* Skip if not enabled */
-		if ( ! self::get_option('dashboard_count') ) {
+	 * Update the number of spam comments
+	 *
+	 * @since  0.1
+	 * @since  2.6.1
+	 */
+	private static function _update_spam_count() {
+		// Skip if not enabled.
+		if ( ! self::get_option( 'dashboard_count' ) ) {
 			return;
 		}
 
 		self::_update_option(
 			'spam_count',
-			intval( self::get_option('spam_count') + 1 )
+			intval( self::get_option( 'spam_count' ) + 1 )
 		);
 	}
 
-
 	/**
-	* Aktualisierung der Statistik
-	*
-	* @since   1.9
-	* @change  2.6.1
-	*/
-
-	private static function _update_daily_stats()
-	{
-		/* Skip if not enabled */
-		if ( ! self::get_option('dashboard_chart') ) {
+	 * Update statistics
+	 *
+	 * @since  1.9
+	 * @since  2.6.1
+	 */
+	private static function _update_daily_stats() {
+		// Skip if not enabled.
+		if ( ! self::get_option( 'dashboard_chart' ) ) {
 			return;
 		}
 
-		/* Init */
-		$stats = (array)self::get_option('daily_stats');
-		$today = (int)strtotime('today');
+		// Init.
+		$stats = (array) self::get_option( 'daily_stats' );
+		$today = (int) strtotime( 'today' );
 
-		/* Hochzählen */
-		if ( array_key_exists($today, $stats) ) {
-			$stats[$today] ++;
+		// Count up.
+		if ( array_key_exists( $today, $stats ) ) {
+			$stats[ $today ] ++;
 		} else {
-			$stats[$today] = 1;
+			$stats[ $today ] = 1;
 		}
 
-		/* Sortieren */
-		krsort($stats, SORT_NUMERIC);
+		// Sort.
+		krsort( $stats, SORT_NUMERIC );
 
-		/* Speichern */
+		// Save.
 		self::_update_option(
 			'daily_stats',
-			array_slice($stats, 0, 31, true)
+			array_slice( $stats, 0, 31, true )
 		);
+	}
+
+	/**
+	 * Returns the secret of a post used in the textarea name attribute.
+	 *
+	 * @since 2.10.0 Modify secret generation because `always_allowed` option not longer exists
+	 *
+	 * @param int $post_id The Post ID.
+	 *
+	 * @return string
+	 */
+	public static function get_secret_name_for_post( $post_id ) {
+		$secret = substr( sha1( md5( 'comment-id' . self::$_salt ) ), 0, 10 );
+
+		$secret = self::ensure_secret_starts_with_letter( $secret );
+
+		/**
+		 * Filters the secret for a post, which is used in the textarea name attribute.
+		 *
+		 * @param string $secret The secret.
+		 * @param int    $post_id The post ID.
+		 * @param bool   $always_allowed Whether the comment form is used outside of the single post view or not.
+		 */
+		return apply_filters(
+			'ab_get_secret_name_for_post',
+			$secret,
+			(int) $post_id,
+			(bool) self::get_option( 'always_allowed' )
+		);
+
+	}
+
+	/**
+	 * Returns the secret of a post used in the textarea id attribute.
+	 *
+	 * @since 2.10.0 Modify secret generation because `always_allowed` option not longer exists
+	 *
+	 * @param int $post_id The post ID.
+	 *
+	 * @return string
+	 */
+	public static function get_secret_id_for_post( $post_id ) {
+
+		$secret = substr( sha1( md5( 'comment-id' . self::$_salt ) ), 0, 10 );
+
+		$secret = self::ensure_secret_starts_with_letter( $secret );
+
+		/**
+		 * Filters the secret for a post, which is used in the textarea id attribute.
+		 *
+		 * @param string $secret The secret.
+		 * @param int    $post_id The post ID.
+		 * @param bool   $always_allowed Whether the comment form is used outside of the single post view or not.
+		 */
+		return apply_filters(
+			'ab_get_secret_id_for_post',
+			$secret,
+			(int) $post_id,
+			(bool) self::get_option( 'always_allowed' )
+		);
+	}
+
+	/**
+	 * Ensures that the secret starts with a letter.
+	 *
+	 * @param string $secret The secret.
+	 *
+	 * @return string
+	 */
+	public static function ensure_secret_starts_with_letter( $secret ) {
+
+		$first_char = substr( $secret, 0, 1 );
+		if ( is_numeric( $first_char ) ) {
+			return chr( $first_char + 97 ) . substr( $secret, 1 );
+		} else {
+			return $secret;
+		}
+	}
+
+	/**
+	 * Returns 'spam'
+	 *
+	 * @since 2.7.3
+	 *
+	 * @return string
+	 */
+	public static function return_spam() {
+
+		return 'spam';
+	}
+
+	/**
+	 * A wrapper around wp_parse_url().
+	 *
+	 * @since 2.8.2
+	 *
+	 * @param string $url The URL to parse.
+	 * @param string $component The component to get back.
+	 *
+	 * @return string
+	 */
+	private static function parse_url( $url, $component = 'host' ) {
+
+		$parts = wp_parse_url( $url );
+		return ( is_array( $parts ) && isset( $parts[ $component ] ) ) ? $parts[ $component ] : '';
+	}
+
+	/**
+	 * Updates the database structure if necessary
+	 *
+	 * @since 2.10.0 Add update routine for country option names
+	 */
+	public static function update_database() {
+		if ( self::db_version_is_current() ) {
+			return;
+		}
+
+		$version_from_db = floatval( get_option( 'antispambee_db_version', 0 ) );
+		if ( $version_from_db < 1.01 ) {
+			global $wpdb;
+
+			/**
+			 * In Version 2.9 the IP of the commenter was saved as a hash. We reverted this solution.
+			 * Therefore, we need to delete this unused data.
+			 */
+			//phpcs:disable WordPress.DB.PreparedSQL.NotPrepared
+			$sql = 'delete from `' . $wpdb->commentmeta . '` where `meta_key` IN ("antispam_bee_iphash")';
+			$wpdb->query( $sql );
+			//phpcs:enable WordPress.DB.PreparedSQL.NotPrepared
+		}
+
+		// DB version was raised in ASB 2.10.0 to 1.02.
+		if ( $version_from_db < 1.02 ) {
+			// Update option names.
+			$options = self::get_options();
+			if ( isset( $options['country_black'] ) ) {
+				$options['country_denied'] = $options['country_black'];
+				unset( $options['country_black'] );
+			}
+			if ( isset( $options['country_white'] ) ) {
+				$options['country_allowed'] = $options['country_white'];
+				unset( $options['country_white'] );
+			}
+
+			update_option(
+				'antispam_bee',
+				$options
+			);
+
+			wp_cache_set(
+				'antispam_bee',
+				$options
+			);
+		}
+
+		update_option( 'antispambee_db_version', self::$db_version );
+	}
+
+	/**
+	 * Whether the database structure is up to date.
+	 *
+	 * @since  2.10.0 Return a float instead of int
+	 *
+	 * @return bool
+	 */
+	private static function db_version_is_current() {
+
+		$current_version = floatval( get_option( 'antispambee_db_version', 0 ) );
+		return $current_version === self::$db_version;
+
+	}
+
+	/**
+	 * Runs after upgrades are completed.
+	 *
+	 * @since 2.10.0
+	 *
+	 * @param \WP_Upgrader $wp_upgrader WP_Upgrader instance.
+	 * @param array        $hook_extra Array of bulk item update data.
+	 */
+	public static function upgrades_completed( $wp_upgrader, $hook_extra ) {
+		if ( ! $wp_upgrader instanceof Plugin_Upgrader || ! isset( $hook_extra['plugins'] ) ) {
+			return;
+		}
+
+		$updated_plugins = $hook_extra['plugins'];
+		$asb_updated = false;
+		foreach ( $updated_plugins as $updated_plugin ) {
+			if ( $updated_plugin !== self::$_base ) {
+				continue;
+			}
+			$asb_updated = true;
+		}
+
+		if ( false === $asb_updated ) {
+			return;
+		}
+
+		self::asb_updated();
+	}
+
+	/**
+	 * Runs after an upgrade via an uploaded ZIP package was completed.
+	 *
+	 * @since 2.10.0
+	 *
+	 * @param string $package The package file.
+	 * @param array  $data The new plugin or theme data.
+	 * @param string $package_type The package type.
+	 */
+	public static function uploaded_upgrade_completed( $package, $data, $package_type ) {
+		if ( 'plugin' !== $package_type ) {
+			return;
+		}
+
+		$text_domain = isset( $data['TextDomain'] ) ? $data['TextDomain'] : '';
+
+		if ( 'antispam-bee' !== $text_domain ) {
+			return;
+		}
+
+		self::asb_updated();
+	}
+
+	/**
+	 * Runs after ASB was updated.
+	 *
+	 * @since 2.10.0
+	 *
+	 * @return void
+	 */
+	private static function asb_updated() {
+		self::update_database();
 	}
 }
 
 
-/* Fire */
+// Fire.
 add_action(
 	'plugins_loaded',
 	array(
 		'Antispam_Bee',
-		'init'
+		'init',
 	)
 );
 
-/* Activation */
+// Activation.
 register_activation_hook(
 	__FILE__,
 	array(
 		'Antispam_Bee',
-		'activate'
+		'activate',
 	)
 );
 
-/* Deactivation */
+// Deactivation.
 register_deactivation_hook(
 	__FILE__,
 	array(
 		'Antispam_Bee',
-		'deactivate'
+		'deactivate',
 	)
 );
 
-/* Uninstall */
+// Uninstall.
 register_uninstall_hook(
 	__FILE__,
 	array(
 		'Antispam_Bee',
-		'uninstall'
+		'uninstall',
+	)
+);
+
+// Upgrade notice.
+add_action(
+	'in_plugin_update_message-' . __FILE__,
+	array(
+		'Antispam_Bee',
+		'upgrade_notice',
 	)
 );

@@ -1,6 +1,6 @@
 <?php
-	if ( !defined('ABSPATH') ){ die(); }
-	
+	if( ! defined('ABSPATH') )	{ die(); }
+
 	global $avia_config;
 
 	/*
@@ -9,33 +9,35 @@
 	 get_header();
 
 
- 	 $title = "";
-	if(!is_singular()) $title = __('Forums',"avia_framework");
-	
-	
-	if(function_exists('bbp_is_single_user_edit') && (bbp_is_single_user_edit() || bbp_is_single_user()))
+	$title = ! is_singular() ? __( 'Forums', 'avia_framework' ) : '';
+
+	if( function_exists( 'bbp_is_single_user_edit' ) && ( bbp_is_single_user_edit() || bbp_is_single_user() ) )
 	{
-		$user_info = get_userdata(bbp_get_displayed_user_id());
-		$title = __("Profile for User:","avia_framework")." ".$user_info->display_name;
-		if(bbp_is_single_user_edit())
-		{
-			$title = __("Edit profile for User:","avia_framework")." ".$user_info->display_name;
-		}
+		$user_info = get_userdata( bbp_get_displayed_user_id() );
+
+		$title = bbp_is_single_user_edit() ? __( 'Edit profile for User:', 'avia_framework' ) : __( 'Profile for User:', 'avia_framework' );
+		$title .= ' ' . $user_info->display_name;
 	}
 
  	 $args = array();
- 	 if(!empty($title)) $args['title'] = $title;
 
- 	 if( get_post_meta( @get_the_ID(), 'header', true) != 'no') echo avia_title($args);
- 	 
+ 	 if( ! empty( $title ) )
+	 {
+		 $args['title'] = $title;
+	 }
+
+ 	 if( get_post_meta( @get_the_ID(), 'header', true ) != 'no' )
+	 {
+		 echo avia_title( $args );
+	 }
+
  	 do_action( 'ava_after_main_title' );
-	 ?>
-
+?>
 		<div class='container_wrap container_wrap_first main_color <?php avia_layout_class( 'main' ); ?>'>
 
 			<div class='container'>
 
-				<main class='template-page content  <?php avia_layout_class( 'content' ); ?> units' <?php avia_markup_helper(array('context' => 'content','post_type'=>'forum'));?>>
+				<main class='template-page content  <?php avia_layout_class( 'content' ); ?> units' <?php avia_markup_helper( array( 'context' => 'content', 'post_type' => 'forum' ) );?>>
 
                     <?php
                     /* Run the loop to output the posts.
@@ -48,20 +50,14 @@
 
 				<!--end content-->
 				</main>
-
-				<?php
-
+<?php
 				//get the sidebar
 				$avia_config['currently_viewing'] = 'forum';
 				get_sidebar();
-
-				?>
+?>
 
 			</div><!--end container-->
 
 		</div><!-- close default .container_wrap element -->
-
-
-
-
-<?php get_footer(); ?>
+<?php
+		get_footer();

@@ -1,43 +1,42 @@
-  /**
+/**
  *
  * Color picker
  * Author: Stefan Petre www.eyecon.ro
- * 
+ *
  * Dual licensed under the MIT and GPL licenses
  *
  * Modified by Kriesi:
  * merged all javascript files to one file and added the function call at the beginning. Also renamed the plugin to circumvent compatibility issues
  */
-
-jQuery(function($) 
+jQuery(function($)
 {
 	$('.avia_colorpicker').avia_color_picker_activation();
 	$('body').avia_color_picker_autodetection();
-}); 
+});
 
 (function($)
 {
-	$.fn.avia_color_picker_autodetection = function(variables) 
+	$.fn.avia_color_picker_autodetection = function(variables)
 	{
 		return this.each(function()
 		{
-			var button = $('.avia_autodetect').live('click', function()
+			var button = $('.avia_autodetect').on('click', function()
 			{
-				var container = $(this).parents('.avia_control:eq(0)'),
+				var container = $(this).parents('.avia_control').eq( 0 ),
 					colorfield = $('.avia_color_picker', container),
 					colordiv = $('.avia_color_picker_div', container),
 					loading = $('.avia_loading', container),
 					searchfor = '#avia_'+ this.hash.substring(1),
 					search_id = this.id.split("-__-"),
-					adjustableImage = container.parents('.avia_visual_set:eq(0)').find('.avia_preview_pic'); 
-					
+					adjustableImage = container.parents('.avia_visual_set').eq( 0 ).find('.avia_preview_pic');
+
 				if(typeof search_id[1] != 'undefined')
 				{
-					searchfor = searchfor + "-__-" +search_id[1]; 
-				}	
-				
+					searchfor = searchfor + "-__-" +search_id[1];
+				}
+
 				var image = $(searchfor + " .avia_upload_input").val();
-				
+
 				$.ajax({
 					type: "POST",
 					url: window.ajaxurl,
@@ -46,7 +45,7 @@ jQuery(function($)
 					{
 						loading.css({display:"none", visibility:'visible'}).fadeIn(400);
 					},
-					
+
 					success: function(msg)
 					{
 						loading.fadeOut();
@@ -58,7 +57,7 @@ jQuery(function($)
 						}
 					}
 				});
-				
+
 				return false;
 			});
 		});
@@ -69,89 +68,89 @@ jQuery(function($)
 
 (function($)
 {
-	$.fn.avia_color_picker_activation = function(variables) 
+	$.fn.avia_color_picker_activation = function(variables)
 	{
 		return this.each(function()
 		{
 			var container = $(this);
 			if(!container.length) return;
-			
+
 			container.each(function()
-			{	
+			{
 				var avia_cp = $(this).find('.avia_color_picker'),
 					avia_cp_div = $(this).find('.avia_color_picker_div'),
-					adjustableImage = $(this).parents('.avia_visual_set:eq(0)').find('.avia_target_inside'),  
+					adjustableImage = $(this).parents('.avia_visual_set').eq( 0 ).find('.avia_target_inside'),
 					bgCol = avia_cp.val(),
 					defaultCol = '#fff';
-				
-				
-									
-					
+
+
+
+
 				if(bgCol != "" ) { avia_cp_div.css('backgroundColor', bgCol); defaultCol = bgCol; }
-			
+
 				  avia_cp.AviaColorPicker(
 				  {
 						color:  defaultCol,
-						onShow: function (colpkr) 
+						onShow: function (colpkr)
 						{
 							$(colpkr).fadeIn(300);
 							return false;
 						},
-						onHide: function (colpkr) 
+						onHide: function (colpkr)
 						{
 							$(colpkr).fadeOut(300);
 							avia_cp.trigger('change');
 							return false;
 						},
-						onChange: function (hsb, hex, rgb) 
+						onChange: function (hsb, hex, rgb)
 						{
 							adjustableImage.css('backgroundColor', '#' + hex);
 							avia_cp_div.css('backgroundColor', '#' + hex);
 							avia_cp.val('#' + hex);
 						}
 					});
-					
-			adjustableImage.css('backgroundColor', avia_cp_div.css('backgroundColor') );	
-			
+
+			adjustableImage.css('backgroundColor', avia_cp_div.css('backgroundColor') );
+
 			var picker = $('#'+avia_cp.data('colorpickerId'));
-			avia_cp.bind('change keyup', function()
+			avia_cp.on('change keyup', function()
 			{
 				var hexCol = $(this).val();
-				
+
 				if(hexCol.length == 7)
 				{
 					adjustableImage.css('backgroundColor', hexCol);
 					avia_cp_div.css('backgroundColor',  hexCol);
 					avia_cp.val( hexCol);
-					
+
 					picker.find('.colorpicker_hex input').val(hexCol).trigger('change');
 				}
-			});	
-			
 			});
-			
-			$('.avia_color_picker_div').bind('click', function()
-			{	
+
+			});
+
+			$('.avia_color_picker_div').on('click', function()
+			{
 				$(this).prev('.avia_color_picker').trigger('click');
 				return false;
 			});
 		});
-	}
-})(jQuery);	
+	};
+})(jQuery);
 
 
 
- 
- 
+
+
  /**
  *
  * Color picker
  * Author: Stefan Petre www.eyecon.ro
- * 
+ *
  * Dual licensed under the MIT and GPL licenses
- * 
+ *
  */
- 
+
 
 (function ($) {
 	var AviaColorPicker = function () {
@@ -252,17 +251,17 @@ jQuery(function($)
 				$(this).parent().addClass('colorpicker_focus');
 			},
 			downIncrement = function (ev) {
-				var field = $(this).parent().find('input').focus();
+				var field = $(this).parent().find('input').trigger( 'focus' );
 				var current = {
 					el: $(this).parent().addClass('colorpicker_slider'),
 					max: this.parentNode.className.indexOf('_hsb_h') > 0 ? 360 : (this.parentNode.className.indexOf('_hsb') > 0 ? 100 : 255),
 					y: ev.pageY,
 					field: field,
 					val: parseInt(field.val(), 10),
-					preview: $(this).parent().parent().data('colorpicker').livePreview					
+					preview: $(this).parent().parent().data('colorpicker').livePreview
 				};
-				$(document).bind('mouseup', current, upIncrement);
-				$(document).bind('mousemove', current, moveIncrement);
+				$(document).on('mouseup', current, upIncrement);
+				$(document).on('mousemove', current, moveIncrement);
 			},
 			moveIncrement = function (ev) {
 				ev.data.field.val(Math.max(0, Math.min(ev.data.max, parseInt(ev.data.val + ev.pageY - ev.data.y, 10))));
@@ -273,9 +272,9 @@ jQuery(function($)
 			},
 			upIncrement = function (ev) {
 				change.apply(ev.data.field.get(0), [true]);
-				ev.data.el.removeClass('colorpicker_slider').find('input').focus();
-				$(document).unbind('mouseup', upIncrement);
-				$(document).unbind('mousemove', moveIncrement);
+				ev.data.el.removeClass('colorpicker_slider').find('input').trigger( 'focus' );
+				$(document).off('mouseup', upIncrement);
+				$(document).off('mousemove', moveIncrement);
 				return false;
 			},
 			downHue = function (ev) {
@@ -284,8 +283,8 @@ jQuery(function($)
 					y: $(this).offset().top
 				};
 				current.preview = current.cal.data('colorpicker').livePreview;
-				$(document).bind('mouseup', current, upHue);
-				$(document).bind('mousemove', current, moveHue);
+				$(document).on('mouseup', current, upHue);
+				$(document).on('mousemove', current, moveHue);
 			},
 			moveHue = function (ev) {
 				change.apply(
@@ -301,8 +300,8 @@ jQuery(function($)
 			upHue = function (ev) {
 				fillRGBFields(ev.data.cal.data('colorpicker').color, ev.data.cal.get(0));
 				fillHexFields(ev.data.cal.data('colorpicker').color, ev.data.cal.get(0));
-				$(document).unbind('mouseup', upHue);
-				$(document).unbind('mousemove', moveHue);
+				$(document).off('mouseup', upHue);
+				$(document).off('mousemove', moveHue);
 				return false;
 			},
 			downSelector = function (ev) {
@@ -311,8 +310,8 @@ jQuery(function($)
 					pos: $(this).offset()
 				};
 				current.preview = current.cal.data('colorpicker').livePreview;
-				$(document).bind('mouseup', current, upSelector);
-				$(document).bind('mousemove', current, moveSelector);
+				$(document).on('mouseup', current, upSelector);
+				$(document).on('mousemove', current, moveSelector);
 			},
 			moveSelector = function (ev) {
 				change.apply(
@@ -331,8 +330,8 @@ jQuery(function($)
 			upSelector = function (ev) {
 				fillRGBFields(ev.data.cal.data('colorpicker').color, ev.data.cal.get(0));
 				fillHexFields(ev.data.cal.data('colorpicker').color, ev.data.cal.get(0));
-				$(document).unbind('mouseup', upSelector);
-				$(document).unbind('mousemove', moveSelector);
+				$(document).off('mouseup', upSelector);
+				$(document).off('mousemove', moveSelector);
 				return false;
 			},
 			enterSubmit = function (ev) {
@@ -348,7 +347,7 @@ jQuery(function($)
 				setCurrentColor(col, cal.get(0));
 				cal.data('colorpicker').onSubmit(col, HSBToHex(col), HSBToRGB(col), cal.data('colorpicker').el);
 			},
-			show = function (ev) { 
+			show = function (ev) {
 				var cal = $('#' + $(this).data('colorpickerId'));
 				cal.data('colorpicker').onBeforeShow.apply(this, [cal.get(0)]);
 				var pos = $(this).offset();
@@ -365,19 +364,19 @@ jQuery(function($)
 				if (cal.data('colorpicker').onShow.apply(this, [cal.get(0)]) != false) {
 					cal.show();
 				}
-				$(document).bind('mousedown', {cal: cal}, hide);
+				$(document).on('mousedown', {cal: cal}, hide);
 				return false;
 			},
 			hide = function (ev) {
-				
+
 				//Kriesi
 				if($(ev.target).data() && $(ev.target).data('colorpickerId') == ev.data.cal.attr('id')) return;
-				
+
 				if (!isChildOf(ev.data.cal.get(0), ev.target, ev.data.cal.get(0))) {
 					if (ev.data.cal.data('colorpicker').onHide.apply(this, [ev.data.cal.get(0)]) != false) {
 						ev.data.cal.hide();
 					}
-					$(document).unbind('mousedown', hide);
+					$(document).off('mousedown', hide);
 				}
 			},
 			isChildOf = function(parentEl, el, container) {
@@ -413,7 +412,7 @@ jQuery(function($)
 					s: Math.min(100, Math.max(0, hsb.s)),
 					b: Math.min(100, Math.max(0, hsb.b))
 				};
-			}, 
+			},
 			fixRGB = function (rgb) {
 				return {
 					r: Math.min(255, Math.max(0, rgb.r)),
@@ -432,7 +431,7 @@ jQuery(function($)
 					hex = o.join('');
 				}
 				return hex;
-			}, 
+			},
 			HexToRGB = function (hex) {
 				var hex = parseInt(((hex.indexOf('#') > -1) ? hex.substring(1) : hex), 16);
 				return {r: hex >> 16, g: (hex & 0x00FF00) >> 8, b: (hex & 0x0000FF)};
@@ -451,7 +450,7 @@ jQuery(function($)
 				var delta = max - min;
 				hsb.b = max;
 				if (max != 0) {
-					
+
 				}
 				hsb.s = max != 0 ? 255 * delta / max : 0;
 				if (hsb.s != 0) {
@@ -548,25 +547,25 @@ jQuery(function($)
 						}
 						options.fields = cal
 											.find('input')
-												.bind('keyup', keyDown)
-												.bind('change', change)
-												.bind('blur', blur)
-												.bind('focus', focus);
+												.on('keyup', keyDown)
+												.on('change', change)
+												.on('blur', blur)
+												.on('focus', focus);
 						cal
-							.find('span').bind('mousedown', downIncrement).end()
-							.find('>div.colorpicker_current_color').bind('click', restoreOriginal);
-						options.selector = cal.find('div.colorpicker_color').bind('mousedown', downSelector);
+							.find('span').on('mousedown', downIncrement).end()
+							.find('>div.colorpicker_current_color').on('click', restoreOriginal);
+						options.selector = cal.find('div.colorpicker_color').on('mousedown', downSelector);
 						options.selectorIndic = options.selector.find('div div');
 						options.el = this;
 						options.hue = cal.find('div.colorpicker_hue div');
-						cal.find('div.colorpicker_hue').bind('mousedown', downHue);
+						cal.find('div.colorpicker_hue').on('mousedown', downHue);
 						options.newColor = cal.find('div.colorpicker_new_color');
 						options.currentColor = cal.find('div.colorpicker_current_color');
 						cal.data('colorpicker', options);
 						cal.find('div.colorpicker_submit')
-							.bind('mouseenter', enterSubmit)
-							.bind('mouseleave', leaveSubmit)
-							.bind('click', clickSubmit);
+							.on('mouseenter', enterSubmit)
+							.on('mouseleave', leaveSubmit)
+							.on('click', clickSubmit);
 						fillRGBFields(options.color, cal.get(0));
 						fillHSBFields(options.color, cal.get(0));
 						fillHexFields(options.color, cal.get(0));
@@ -580,7 +579,7 @@ jQuery(function($)
 								display: 'block'
 							});
 						} else {
-							$(this).bind(options.eventName, show);
+							$(this).on(options.eventName, show);
 						}
 					}
 				});
@@ -639,7 +638,7 @@ jQuery(function($)
  *
  * Zoomimage
  * Author: Stefan Petre www.eyecon.ro
- * 
+ *
  */
 
 	var EYE = window.EYE = function() {
@@ -668,11 +667,11 @@ jQuery(function($)
 		};
 	}();
 	$(EYE.init);
-	
-	
-	
-	
-	
+
+
+
+
+
 })(jQuery);
 
 
@@ -680,7 +679,7 @@ jQuery(function($)
  *
  * Utilities
  * Author: Stefan Petre www.eyecon.ro
- * 
+ *
  */
 (function($) {
 EYE.extend({
@@ -719,7 +718,7 @@ EYE.extend({
 				y -= document.body.offsetTop;
 			}
 			el = e.parentNode;
-			while (el && el.tagName.toUpperCase() != 'BODY' && el.tagName.toUpperCase() != 'HTML') 
+			while (el && el.tagName.toUpperCase() != 'BODY' && el.tagName.toUpperCase() != 'HTML')
 			{
 				if (jQuery.curCSS(el, 'display') != 'inline') {
 					x -= el.scrollLeft;
@@ -926,7 +925,7 @@ if (!$.easing.easeout) {
 		return -delta * ((n=n/duration-1)*n*n*n - 1) + firstNum;
 	};
 }
-	
+
 })(jQuery);
 
 
@@ -938,16 +937,16 @@ if (!$.easing.easeout) {
 /**
  *
  * layout.js
- * 
+ *
  */
 (function($){
 	var initLayout = function() {
 		var hash = window.location.hash.replace('#', '');
 		var currentTab = $('ul.navigationTabs a')
-							.bind('click', showTab)
+							.on('click', showTab)
 							.filter('a[rel="' + hash + '"]');
-		if (currentTab.size() == 0) {
-			currentTab = $('ul.navigationTabs a:first');
+		if (currentTab.length == 0) {
+			currentTab = $('ul.navigationTabs a').first();
 		}
 		showTab.apply(currentTab.get(0));
 		$('#colorpickerHolder').AviaColorPicker({flat: true});
@@ -960,7 +959,7 @@ if (!$.easing.easeout) {
 		});
 		$('#colorpickerHolder2>div').css('position', 'absolute');
 		var widt = false;
-		$('#colorSelector2').bind('click', function() {
+		$('#colorSelector2').on('click', function() {
 			$('#colorpickerHolder2').stop().animate({height: widt ? 0 : 173}, 500);
 			widt = !widt;
 		});
@@ -973,7 +972,7 @@ if (!$.easing.easeout) {
 				$(this).AviaColorPickerSetColor(this.value);
 			}
 		})
-		.bind('keyup', function(){
+		.on('keyup', function(){
 			$(this).AviaColorPickerSetColor(this.value);
 		});
 		$('#colorSelector').AviaColorPicker({
@@ -991,12 +990,12 @@ if (!$.easing.easeout) {
 			}
 		});
 	};
-	
+
 	var showTab = function(e) {
 		var tabIndex = $('ul.navigationTabs a')
 							.removeClass('active')
 							.index(this);
-				
+
 		$(this)
 			.addClass('active');
 			//.blur();
@@ -1005,7 +1004,7 @@ if (!$.easing.easeout) {
 				.eq(tabIndex)
 				.show();
 	};
-	
+
 	EYE.register(initLayout, 'init');
 })(jQuery)
 

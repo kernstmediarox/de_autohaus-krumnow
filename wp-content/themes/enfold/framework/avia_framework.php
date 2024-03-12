@@ -1,4 +1,7 @@
 <?php
+if( ! defined( 'ABSPATH' ) ) {  exit;  }    // Exit if accessed directly
+
+
 /**
  * AVIA Framework
  *
@@ -13,29 +16,25 @@
  * @link		http://aviathemes.com
  * @since		Version 1.0
  * @package 	AviaFramework
- * @version 	4.6
-
-*/ 
-define( 'AV_FRAMEWORK_VERSION', "4.6" ); 
-
+ * @version 	5.6
+*/
+define( 'AV_FRAMEWORK_VERSION', '5.6' );
 
 
 /**
- *  
+ *
  * Action for plugins and functions that should be executed before any of the framework loads
- * 
+ *
  */
 do_action( 'avia_action_before_framework_init' );
- 
- 
- 
+
+
 /**
  *  Config File
- *  Load the autoconfig file that will set some 
+ *  Load the autoconfig file that will set some
  *  constants based on the installation type (plugin or theme)
- * 
+ *
  */
- 
  require( 'php/inc-autoconfig.php' );
 
 
@@ -44,24 +43,22 @@ do_action( 'avia_action_before_framework_init' );
  *  Superobject Class
  *  Load the super object class, but only if it hasn't been
  *  already loaded by an avia plugin with newer version
- * 
+ *
  */
- 
-if( ! defined('AVIA_PLUGIN_FW') || ! defined('AVIA_THEME_FW') || ( version_compare(AVIA_THEME_FW, AVIA_PLUGIN_FW, '>=') ) )
-{ 
-	require( AVIA_PHP.'class-superobject.php' );
+if( ! defined( 'AVIA_PLUGIN_FW' ) || ! defined( 'AVIA_THEME_FW' ) || ( version_compare( AVIA_THEME_FW, AVIA_PLUGIN_FW, '>=' ) ) )
+{
+	require( AVIA_PHP . 'class-superobject.php' );
 }
 
 
 /**
  *  Include Backend default Function set
- *  Loads the autoincluder function to be able to retrieve the 
+ *  Loads the autoincluder function to be able to retrieve the
  *  predefined page options and to be able to include
  *  files based on option arrays
- * 
+ *
  */
- 
-require( AVIA_PHP.'function-set-avia-backend.php' );
+require( AVIA_PHP . 'function-set-avia-backend.php' );
 
 
 /*
@@ -70,9 +67,10 @@ require( AVIA_PHP.'function-set-avia-backend.php' );
  *  in functions.php for theme or plugin specific scripts
  * ------------------------------------------------------
  */
- 
- if(isset($avia_autoload) && is_array($avia_autoload)) avia_backend_load_scripts_by_option($avia_autoload);
-
+ if( isset( $avia_autoload ) && is_array( $avia_autoload ) )
+ {
+	 avia_backend_load_scripts_by_option( $avia_autoload );
+ }
 
 
 /*
@@ -81,7 +79,6 @@ require( AVIA_PHP.'function-set-avia-backend.php' );
  *  upon creation of the superobject
  * ------------------------------------------------------
  */
- 
 $avia_base_data = apply_filters( 'avia_filter_base_data', $avia_base_data );
 
 
@@ -92,9 +89,17 @@ $avia_base_data = apply_filters( 'avia_filter_base_data', $avia_base_data );
  *  should be used to save and retrieve database entries
  * ------------------------------------------------------
  */
- 
- $avia = new avia_superobject($avia_base_data);
+
+/**
+ * This fixes a problem with WP CLI
+ *
+ * https://kriesi.at/support/topic/enfold-produces-php-notices-in-wp-cli/
+ * https://kriesi.at/support/topic/trying-to-get-property-of-non-object-5/#post-1164870
+ */
+global $avia;
+
+$avia = AviaSuperobject( $avia_base_data );
+
 
 
 // ------------------------------------------------------------------------
-

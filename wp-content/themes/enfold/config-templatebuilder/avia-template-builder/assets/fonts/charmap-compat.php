@@ -1,5 +1,12 @@
-<?php //a manually generated charmap to map the deprecated font to the new version. lets hope i never have to do this again :P
-$chars = array(); 
+<?php
+/*
+ * a manually generated charmap to map the deprecated font to the new version. lets hope i never have to do this again :P
+ *
+ * @since ???
+ * @deprecated 5.6.7
+ */
+
+$chars = array();
 $chars['entypo-fontello'][] = 'ue854';
 $chars['entypo-fontello'][] = 'ue8ac';
 $chars['entypo-fontello'][] = 'ue8ba';
@@ -249,6 +256,10 @@ $chars['entypo-fontello'][] = 'ue915';
 $chars['entypo-fontello'][] = 'ue916';
 $chars['entypo-fontello'][] = 'ue917';
 $chars['entypo-fontello'][] = 'ue918';
+$chars['entypo-fontello'][] = 'uf16a';
+$chars['entypo-fontello'][] = 'ue930';
+$chars['entypo-fontello'][] = 'ue932';
+$chars['entypo-fontello'][] = 'ue933';
 
 
 

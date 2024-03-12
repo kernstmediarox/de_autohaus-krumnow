@@ -23,7 +23,7 @@
 				$(document).on('click', megmenuActivator, function()
 				{
 					var checkbox = $(this),
-						container = checkbox.parents('.menu-item:eq(0)');
+						container = checkbox.parents('.menu-item').eq( 0 );
 
 					if(checkbox.is(':checked'))
 					{
@@ -64,7 +64,7 @@
 
 				if(!item.is('.menu-item-depth-0'))
 				{
-					var checkItem = menuItems.filter(':eq('+(i-1)+')');
+					var checkItem = menuItems.eq( i-1 );
 					if(checkItem.is('.avia_mega_active'))
 					{
 						item.addClass('avia_mega_active');
